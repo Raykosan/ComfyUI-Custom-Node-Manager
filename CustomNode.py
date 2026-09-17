@@ -168,15 +168,36 @@ def _git_info(node_dir: str) -> dict:
 
 # --- Метаданные нод -----------------------------------------------------
 
-def _read_node_metadata(node_dir: str) -> dict:
+def _read_node_metadata(node_dir: str, tag: str = None) -> dict:
+    """
+    Собирает метаданные ноды из всех доступных источников.
+    Приоритет версии:
+      1. git tag (если HEAD точно на теге)
+      2. metadata.json
+      3. pyproject.toml
+      4. __init__.py (__version__)
+      5. version.py / _version.py
+      6. setup.py
+      7. package.json
+    Если ничего не найдено — версия остаётся None, вызывающий код
+    может добавить fallback через git describe.
+    """
     meta = {
         "name": os.path.basename(node_dir),
         "description": None,
         "version": None,
+        "version_source": None,
+        "version_conflicts": [],
         "repository": None,
     }
 
-    # metadata.json (формат ComfyUI Registry)
+    found = {}  # source -> version
+
+    # --- 1. git tag ---
+    if tag:
+        found["tag"] = tag
+
+    # --- 2. metadata.json ---
     meta_json = os.path.join(node_dir, "metadata.json")
     if os.path.isfile(meta_json):
         try:
@@ -184,19 +205,22 @@ def _read_node_metadata(node_dir: str) -> dict:
                 data = json.load(f)
             meta["name"] = data.get("name") or meta["name"]
             meta["description"] = data.get("description")
-            meta["version"] = data.get("version")
             meta["repository"] = (
                 data.get("repository")
                 or data.get("repo")
                 or data.get("source")
             )
+            v = data.get("version")
+            if v:
+                found["metadata.json"] = str(v)
         except Exception:
             pass
 
-    # pyproject.toml
+    # --- 3. pyproject.toml ---
     pyproj = os.path.join(node_dir, "pyproject.toml")
     if os.path.isfile(pyproj):
         try:
+            tdata = None
             try:
                 import tomllib as _toml  # Py3.11+
                 with open(pyproj, "rb") as f:
@@ -215,27 +239,26 @@ def _read_node_metadata(node_dir: str) -> dict:
                 )
                 if repo and not meta["repository"]:
                     meta["repository"] = repo
-
-                if not meta["version"]:
-                    meta["version"] = proj.get("version")
-
                 if not meta["description"]:
                     meta["description"] = proj.get("description")
+                v = proj.get("version")
+                if v:
+                    found["pyproject.toml"] = str(v)
 
-                # Poetry fallback
                 poetry = tdata.get("tool", {}).get("poetry", {}) or {}
                 if poetry:
                     if not meta["repository"]:
                         meta["repository"] = poetry.get("repository")
-                    if not meta["version"]:
-                        meta["version"] = poetry.get("version")
                     if not meta["description"]:
                         meta["description"] = poetry.get("description")
+                    v2 = poetry.get("version")
+                    if v2 and "pyproject.toml" not in found:
+                        found["pyproject.toml"] = str(v2)
 
-            # Regex fallback, если tomllib нет
+            # Regex fallback
+            with open(pyproj, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
             if not meta["repository"]:
-                with open(pyproj, "r", encoding="utf-8", errors="ignore") as f:
-                    content = f.read()
                 m = re.search(
                     r'(?:repository|source|homepage)\s*=\s*["\']'
                     r'(https?://github\.com/[^"\']+)["\']',
@@ -243,37 +266,102 @@ def _read_node_metadata(node_dir: str) -> dict:
                 )
                 if m:
                     meta["repository"] = m.group(1)
-                elif not meta["version"]:
-                    m2 = re.search(
-                        r'^\s*version\s*=\s*["\']([^"\']+)["\']',
-                        content, re.MULTILINE,
-                    )
-                    if m2:
-                        meta["version"] = m2.group(1)
+            if "pyproject.toml" not in found:
+                m2 = re.search(
+                    r'^\s*version\s*=\s*["\']([^"\']+)["\']',
+                    content, re.MULTILINE,
+                )
+                if m2:
+                    found["pyproject.toml"] = m2.group(1)
         except Exception:
             pass
 
-    # README fallback (последний шанс)
-    if not meta["repository"]:
-        for rname in ("README.md", "readme.md", "README.rst"):
-            rpath = os.path.join(node_dir, rname)
-            if os.path.isfile(rpath):
-                try:
-                    with open(rpath, "r", encoding="utf-8", errors="ignore") as f:
-                        head = f.read(20_000)
-                    m = re.search(
-                        r"https?://github\.com/([A-Za-z0-9_.\-]+)/([A-Za-z0-9_.\-]+)",
-                        head,
-                    )
-                    if m:
-                        owner, repo = m.group(1), m.group(2)
-                        # Отсеиваем типовой шум (бейджи, github.com/features и т.п.)
-                        if owner.lower() not in ("features", "settings", "apps"):
-                            repo = repo.rstrip(".")
-                            meta["repository"] = f"https://github.com/{owner}/{repo}"
-                    break
-                except Exception:
-                    pass
+    # --- 4. __init__.py __version__ ---
+    init_py = os.path.join(node_dir, "__init__.py")
+    if os.path.isfile(init_py):
+        try:
+            with open(init_py, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read(500_000)
+            m = re.search(
+                r'^__version__\s*[:=]\s*["\']([^"\']+)["\']',
+                content, re.MULTILINE,
+            )
+            if m:
+                found["__init__.py"] = m.group(1)
+        except Exception:
+            pass
+
+    # --- 5. version.py / _version.py / VERSION.py ---
+    for fname in ("version.py", "_version.py", "VERSION.py"):
+        vpath = os.path.join(node_dir, fname)
+        if not os.path.isfile(vpath):
+            continue
+        try:
+            with open(vpath, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read(50_000)
+            m = re.search(
+                r'^__version__\s*[:=]\s*["\']([^"\']+)["\']',
+                content, re.MULTILINE,
+            )
+            if m:
+                found[fname] = m.group(1)
+                break
+            m = re.search(
+                r'^VERSION\s*[:=]\s*["\']([^"\']+)["\']',
+                content, re.MULTILINE,
+            )
+            if m:
+                found[fname] = m.group(1)
+                break
+        except Exception:
+            pass
+
+    # --- 6. setup.py ---
+    setup_py = os.path.join(node_dir, "setup.py")
+    if os.path.isfile(setup_py):
+        try:
+            with open(setup_py, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read(100_000)
+            m = re.search(r'version\s*=\s*["\']([^"\']+)["\']', content)
+            if m:
+                found["setup.py"] = m.group(1)
+        except Exception:
+            pass
+
+    # --- 7. package.json ---
+    pkg_json = os.path.join(node_dir, "package.json")
+    if os.path.isfile(pkg_json):
+        try:
+            with open(pkg_json, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            v = data.get("version")
+            if v:
+                found["package.json"] = str(v)
+        except Exception:
+            pass
+
+    # --- Приоритет источников ---
+    priority = [
+        "tag",
+        "metadata.json",
+        "pyproject.toml",
+        "__init__.py",
+        "version.py",
+        "_version.py",
+        "VERSION.py",
+        "setup.py",
+        "package.json",
+    ]
+    for src in priority:
+        if src in found:
+            meta["version"] = found[src]
+            meta["version_source"] = src
+            break
+
+    # --- Конфликты (все, кроме победителя) ---
+    for src, v in found.items():
+        if src != meta["version_source"] and v != meta["version"]:
+            meta["version_conflicts"].append({"source": src, "version": v})
 
     return meta
 
@@ -345,7 +433,17 @@ def _scan_single_node(node_dir: str):
         if not is_node and not git_info["git_url"]:
             return None
 
-        meta = _read_node_metadata(node_dir)
+        meta = _read_node_metadata(node_dir, tag=git_info.get("tag"))
+
+        # Fallback: если файловые источники ничего не дали — пробуем git describe
+        if not meta["version"]:
+            desc = _git_run(node_dir, "describe", "--tags")
+            if desc:
+                # "v7.5-5-gabc1234" -> "v7.5";  "v7.5" -> "v7.5"
+                clean = re.sub(r"-\d+-g[0-9a-f]+$", "", desc)
+                if clean:
+                    meta["version"] = clean
+                    meta["version_source"] = "git describe"
 
         detected_url = None
         if not git_info["git_url"] and meta.get("repository"):
@@ -358,6 +456,8 @@ def _scan_single_node(node_dir: str):
             "name": meta["name"],
             "description": meta["description"],
             "version": meta["version"],
+            "version_source": meta["version_source"],
+            "version_conflicts": meta["version_conflicts"],
             "git_url": git_info["git_url"],
             "detected_git_url": detected_url,
             "branch": git_info["branch"],

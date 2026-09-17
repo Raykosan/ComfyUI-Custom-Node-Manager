@@ -1,6 +1,6 @@
 import { app } from "../../../scripts/app.js";
 
-console.log("🦊 CNM JS v17 (attach remote) loaded at", new Date().toLocaleTimeString());
+console.log("🦊 CNM JS v18 (attach remote) loaded at", new Date().toLocaleTimeString());
 
 const STORAGE_KEY = "CustomNodeManager.ShowTopbarIcon";
 
@@ -502,7 +502,7 @@ function openManagerModal() {
 
     const header = document.createElement("div");
     header.className = "cnm-header";
-    header.innerHTML = `<div class="cnm-title">🦊 Custom Node Manager <span style="font-size:11px;color:var(--descrip-text);font-weight:400;">(js v17)</span></div>`;
+    header.innerHTML = `<div class="cnm-title">🦊 Custom Node Manager <span style="font-size:11px;color:var(--descrip-text);font-weight:400;">(js v18)</span></div>`;
 
     const closeBtn = document.createElement("button");
     closeBtn.className = "cnm-btn cnm-btn-small";
@@ -948,7 +948,14 @@ function renderNodeRow(node) {
 
     const badges = document.createElement("div");
     badges.className = "cnm-badges";
-    if (node.tag) badges.appendChild(badge(node.tag, "tag"));
+
+    if (node.version) {
+        badges.appendChild(versionBadge(
+            node.version,
+            node.version_source,
+            node.version_conflicts
+        ));
+    }
     if (node.branch) badges.appendChild(badge(node.branch, "branch"));
     if (node.commit_short) badges.appendChild(badge(node.commit_short, "commit"));
 
@@ -1064,6 +1071,36 @@ function badge(text, kind) {
     const b = document.createElement("span");
     b.className = `cnm-badge cnm-badge-${kind}`;
     b.textContent = text;
+    return b;
+}
+
+function versionBadge(version, source, conflicts) {
+    const b = document.createElement("span");
+    b.className = "cnm-badge cnm-badge-version";
+
+    const verEl = document.createElement("span");
+    verEl.className = "cnm-badge-version-text";
+    verEl.textContent = version;
+    b.appendChild(verEl);
+
+    if (source) {
+        const sep = document.createElement("span");
+        sep.className = "cnm-badge-source";
+        sep.textContent = " · " + source;
+        b.appendChild(sep);
+    }
+
+    // Tooltip: источник + конфликты
+    const lines = [];
+    if (source) lines.push(`Version source: ${source}`);
+    if (conflicts && conflicts.length) {
+        lines.push("Also found:");
+        for (const c of conflicts) {
+            lines.push(`  ${c.source}: ${c.version}`);
+        }
+    }
+    if (lines.length) b.title = lines.join("\n");
+
     return b;
 }
 
@@ -2752,6 +2789,22 @@ function injectStyles() {
         }
         .cnm-detected-url:hover {
             text-decoration: underline;
+        }
+        /* ---------- Version badge ---------- */
+        .cnm-badge-version {
+            background: rgba(59,130,246,0.18);
+            color: var(--fg-color);
+            border: 1px solid rgba(59,130,246,0.4);
+            font-weight: 600;
+        }
+        .cnm-badge-version-text {
+            font-family: monospace;
+        }
+        .cnm-badge-source {
+            font-size: 10px;
+            font-weight: 400;
+            color: var(--descrip-text);
+            opacity: 0.85;
         }
     `;
     document.head.appendChild(style);
