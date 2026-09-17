@@ -1,5 +1,5 @@
 Private custom node manager for ComfyUI  
-It does not depend on the comfi management. There's a full paragraph there now - the latest versions haven't been shown for months (even for tops like rgthree, easy-use, pixorama, etc.). Tightening security checks cuts off updates to node versions through the comfi's in-house manager.  
+It does not depend on the comfi management. It's a complete mess now - the latest versions haven't been shown for months (even for tops like rgthree, easy-use, pixorama, etc.). Tightening security checks cuts off updates to node versions through the comfi's in-house manager.  
 
 The extension scans all the nodes in the custom_nodes folder.  
 The extension works from Settings (the gear icon in the comfi sidebar).  
