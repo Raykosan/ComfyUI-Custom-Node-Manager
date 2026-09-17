@@ -10,3 +10,13 @@ Install a node with dependencies using the github URL
 Update the installed node to the selected version  
 Install (overwrite) a specific version of the node instead of the existing one  
 Delete node - complete removal of the node folder from custom  
+
+Many node developers do not specify versions. Just click 'Latest' and you will have the latest version of the node available on the github.  
+
+<img width="217" height="765" alt="Screenshot_1" src="https://github.com/user-attachments/assets/b3bb8b71-c7a4-4f5e-a8c6-6c28e1f71789" />
+<img width="248" height="104" alt="Screenshot_2" src="https://github.com/user-attachments/assets/a023e9c9-46d0-465f-a6ae-1423c95be448" />
+<img width="890" height="870" alt="Screenshot_3" src="https://github.com/user-attachments/assets/7c2342c3-6029-44ed-8401-f63b79b07ede" />
+<img width="511" height="302" alt="Screenshot_5" src="https://github.com/user-attachments/assets/6a48f70a-be40-41f5-8565-946c0b5a479b" />
+
+
+
