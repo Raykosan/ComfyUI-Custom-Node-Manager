@@ -160,7 +160,7 @@ Or set the `GITHUB_TOKEN` environment variable — it takes priority.
 
 ## Troubleshooting
 
-### "git не найден в PATH"
+### "git was not found in the PATH"
 Install git: [git-scm.com/downloads](https://git-scm.com/downloads). On Windows, make sure "Add to PATH" is checked during installation.
 
 ### "GitHub API rate limit достигнут"
