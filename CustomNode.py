@@ -14,9 +14,17 @@ from server import PromptServer
 try:
     from . import git_ops
     from . import task_queue
+    from . import update_checker
+    from . import github_client
 except ImportError:
+    import sys as _sys
+    _here = os.path.dirname(os.path.abspath(__file__))
+    if _here not in _sys.path:
+        _sys.path.insert(0, _here)
     import git_ops          # type: ignore
     import task_queue       # type: ignore
+    import update_checker   # type: ignore
+    import github_client    # type: ignore
 
 logger = logging.getLogger("CustomNodeManager")
 
@@ -26,6 +34,23 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 COMFYUI_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))
 CACHE_FILE = os.path.join(CURRENT_DIR, "cache.json")
 WEB_DIR = os.path.join(CURRENT_DIR, "web")
+# Фоновая задача проверки обновлений
+_update_check_task = None
+# GitHub-клиент создаётся лениво, при первом обращении
+_gh_client = None
+_gh_token_used = None
+
+
+def _get_gh_client():
+    global _gh_client, _gh_token_used
+    token = github_client.resolve_token()
+    if _gh_client is None or _gh_token_used != token:
+        _gh_client = github_client.GitHubClient(token=token)
+        _gh_token_used = token
+        logger.info(
+            f"GitHub client: {'with token' if token else 'without token (60 req/h)'}"
+        )
+    return _gh_client
 
 # --- Утилиты безопасности ----------------------------------------------
 
@@ -119,6 +144,7 @@ def _git_info(node_dir: str) -> dict:
     info = {
         "git_url": None, "branch": None, "commit": None,
         "commit_short": None, "tag": None, "dirty": False,
+        "stash_count": 0,
     }
     git_dir = os.path.join(node_dir, ".git")
     if not (os.path.isdir(git_dir) or os.path.isfile(git_dir)):
@@ -133,14 +159,24 @@ def _git_info(node_dir: str) -> dict:
     info["tag"] = _git_run(node_dir, "describe", "--tags", "--exact-match")
     status = _git_run(node_dir, "status", "--porcelain")
     info["dirty"] = bool(status)
+
+    stash_list = _git_run(node_dir, "stash", "list")
+    if stash_list:
+        info["stash_count"] = sum(1 for line in stash_list.splitlines() if line.strip())
     return info
 
 
 # --- Метаданные нод -----------------------------------------------------
 
 def _read_node_metadata(node_dir: str) -> dict:
-    meta = {"name": os.path.basename(node_dir), "description": None, "version": None}
+    meta = {
+        "name": os.path.basename(node_dir),
+        "description": None,
+        "version": None,
+        "repository": None,
+    }
 
+    # metadata.json (формат ComfyUI Registry)
     meta_json = os.path.join(node_dir, "metadata.json")
     if os.path.isfile(meta_json):
         try:
@@ -149,33 +185,144 @@ def _read_node_metadata(node_dir: str) -> dict:
             meta["name"] = data.get("name") or meta["name"]
             meta["description"] = data.get("description")
             meta["version"] = data.get("version")
+            meta["repository"] = (
+                data.get("repository")
+                or data.get("repo")
+                or data.get("source")
+            )
         except Exception:
             pass
 
+    # pyproject.toml
     pyproj = os.path.join(node_dir, "pyproject.toml")
-    if os.path.isfile(pyproj) and not meta["version"]:
+    if os.path.isfile(pyproj):
         try:
-            with open(pyproj, "r", encoding="utf-8") as f:
-                content = f.read()
-            m = re.search(r'^\s*version\s*=\s*["\']([^"\']+)["\']', content, re.MULTILINE)
-            if m:
-                meta["version"] = m.group(1)
+            try:
+                import tomllib as _toml  # Py3.11+
+                with open(pyproj, "rb") as f:
+                    tdata = _toml.load(f)
+            except ImportError:
+                tdata = None
+
+            if tdata:
+                proj = tdata.get("project", {}) or {}
+                urls = proj.get("urls", {}) or {}
+                repo = (
+                    urls.get("Repository")
+                    or urls.get("Source")
+                    or urls.get("Homepage")
+                    or urls.get("Issues")
+                )
+                if repo and not meta["repository"]:
+                    meta["repository"] = repo
+
+                if not meta["version"]:
+                    meta["version"] = proj.get("version")
+
+                if not meta["description"]:
+                    meta["description"] = proj.get("description")
+
+                # Poetry fallback
+                poetry = tdata.get("tool", {}).get("poetry", {}) or {}
+                if poetry:
+                    if not meta["repository"]:
+                        meta["repository"] = poetry.get("repository")
+                    if not meta["version"]:
+                        meta["version"] = poetry.get("version")
+                    if not meta["description"]:
+                        meta["description"] = poetry.get("description")
+
+            # Regex fallback, если tomllib нет
+            if not meta["repository"]:
+                with open(pyproj, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                m = re.search(
+                    r'(?:repository|source|homepage)\s*=\s*["\']'
+                    r'(https?://github\.com/[^"\']+)["\']',
+                    content, re.IGNORECASE,
+                )
+                if m:
+                    meta["repository"] = m.group(1)
+                elif not meta["version"]:
+                    m2 = re.search(
+                        r'^\s*version\s*=\s*["\']([^"\']+)["\']',
+                        content, re.MULTILINE,
+                    )
+                    if m2:
+                        meta["version"] = m2.group(1)
         except Exception:
             pass
+
+    # README fallback (последний шанс)
+    if not meta["repository"]:
+        for rname in ("README.md", "readme.md", "README.rst"):
+            rpath = os.path.join(node_dir, rname)
+            if os.path.isfile(rpath):
+                try:
+                    with open(rpath, "r", encoding="utf-8", errors="ignore") as f:
+                        head = f.read(20_000)
+                    m = re.search(
+                        r"https?://github\.com/([A-Za-z0-9_.\-]+)/([A-Za-z0-9_.\-]+)",
+                        head,
+                    )
+                    if m:
+                        owner, repo = m.group(1), m.group(2)
+                        # Отсеиваем типовой шум (бейджи, github.com/features и т.п.)
+                        if owner.lower() not in ("features", "settings", "apps"):
+                            repo = repo.rstrip(".")
+                            meta["repository"] = f"https://github.com/{owner}/{repo}"
+                    break
+                except Exception:
+                    pass
 
     return meta
 
-
 def _looks_like_node(node_dir: str) -> bool:
+    """
+    Эвристика: считаем папку ComfyUI-расширением, если в __init__.py есть
+    признаки регистрации нод, роутов или патчей ядра ComfyUI.
+    Плюс fallback по файлам-маркерам (install.py, requirements.txt и т.д.).
+    """
     init_py = os.path.join(node_dir, "__init__.py")
     if os.path.isfile(init_py):
         try:
             with open(init_py, "r", encoding="utf-8", errors="ignore") as f:
-                head = f.read(200_000)
-            if "NODE_CLASS_MAPPINGS" in head or "WEB_DIRECTORY" in head:
-                return True
+                head = f.read(500_000)
+
+            # Сильные маркеры: экспорт нод / веб-ресурсов / роутов
+            strong_markers = (
+                "NODE_CLASS_MAPPINGS",
+                "NODE_DISPLAY_NAME_MAPPINGS",
+                "WEB_DIRECTORY",
+                "PromptServer",
+            )
+            for m in strong_markers:
+                if m in head:
+                    return True
+
+            # Слабые маркеры: работа с ядром ComfyUI (патчи attention, samplers, sd)
+            weak_markers = (
+                "import comfy",
+                "from comfy",
+                "import nodes",
+                "from nodes",
+                "comfy.ldm",
+                "comfy.sd",
+                "folder_paths",
+            )
+            for m in weak_markers:
+                if m in head:
+                    return True
+
+            # Fallback: непустой __init__.py + есть requirements/install
+            if len(head) > 200:
+                for marker in ("requirements.txt", "install.py", "pyproject.toml"):
+                    if os.path.isfile(os.path.join(node_dir, marker)):
+                        return True
         except Exception:
             pass
+
+    # Без __init__.py — только явные маркеры
     for marker in ("pyproject.toml", "metadata.json", "install.py", "requirements.txt"):
         if os.path.isfile(os.path.join(node_dir, marker)):
             return True
@@ -200,6 +347,10 @@ def _scan_single_node(node_dir: str):
 
         meta = _read_node_metadata(node_dir)
 
+        detected_url = None
+        if not git_info["git_url"] and meta.get("repository"):
+            detected_url = _normalize_git_url(meta["repository"].strip())
+
         return {
             "folder": name,
             "path": node_dir,
@@ -208,11 +359,13 @@ def _scan_single_node(node_dir: str):
             "description": meta["description"],
             "version": meta["version"],
             "git_url": git_info["git_url"],
+            "detected_git_url": detected_url,
             "branch": git_info["branch"],
             "commit": git_info["commit"],
             "commit_short": git_info["commit_short"],
             "tag": git_info["tag"],
             "dirty": git_info["dirty"],
+            "stash_count": git_info.get("stash_count", 0),
             "has_requirements": os.path.isfile(os.path.join(node_dir, "requirements.txt")),
             "has_install_py": os.path.isfile(os.path.join(node_dir, "install.py")),
         }
@@ -481,6 +634,271 @@ async def api_versions(request):
         return web.json_response({"error": str(e)}, status=500)
 
     return web.json_response({"success": True, "folder": folder, **data})
+
+# --- stash endpoints ----------------------------------------------------
+
+@PromptServer.instance.routes.get("/custom_node_manager/stashes/{folder}")
+async def api_stashes(request):
+    folder = request.match_info["folder"]
+    node_dir = _find_node_dir(folder)
+    if not node_dir:
+        return web.json_response({"error": f"Нода не найдена: {folder}"}, status=404)
+    if not git_ops.git_available():
+        return web.json_response({"error": "git не найден в PATH"}, status=500)
+
+    loop = asyncio.get_running_loop()
+    try:
+        stashes = await loop.run_in_executor(None, git_ops.list_stashes, node_dir)
+    except Exception as e:
+        logger.exception(f"list_stashes({folder}) упал")
+        return web.json_response({"error": str(e)}, status=500)
+
+    return web.json_response({"success": True, "folder": folder, "stashes": stashes})
+
+
+@PromptServer.instance.routes.post("/custom_node_manager/stash/pop")
+async def api_stash_pop(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json"}, status=400)
+
+    folder = (data.get("folder") or "").strip()
+    ref = (data.get("ref") or "").strip()
+    if not folder or not ref:
+        return web.json_response({"error": "folder и ref обязательны"}, status=400)
+
+    node_dir = _find_node_dir(folder)
+    if not node_dir:
+        return web.json_response({"error": f"Нода не найдена: {folder}"}, status=404)
+
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(None, git_ops.pop_stash, node_dir, ref)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+    return web.json_response({"success": True, **result})
+
+
+@PromptServer.instance.routes.post("/custom_node_manager/stash/drop")
+async def api_stash_drop(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json"}, status=400)
+
+    folder = (data.get("folder") or "").strip()
+    ref = (data.get("ref") or "").strip()
+    if not folder or not ref:
+        return web.json_response({"error": "folder и ref обязательны"}, status=400)
+
+    node_dir = _find_node_dir(folder)
+    if not node_dir:
+        return web.json_response({"error": f"Нода не найдена: {folder}"}, status=404)
+
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(None, git_ops.drop_stash, node_dir, ref)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+    return web.json_response({"success": True, **result})
+
+# --- update check -------------------------------------------------------
+
+async def _run_update_check():
+    """
+    Фоновая проверка обновлений.
+    Сначала использует кэш нод из cache.json. Если кэш пустой — сканирует.
+    Затем гоняет git ls-remote по всем нодам.
+    """
+    loop = asyncio.get_running_loop()
+
+    try:
+        # 1. Пытаемся обойтись кэшем нод
+        cache = _load_cache()
+        cached_nodes = cache.get("nodes") or {}
+        nodes = list(cached_nodes.values())
+
+        if not nodes:
+            logger.info("Update check: cache empty, scanning custom_nodes")
+            nodes = await loop.run_in_executor(None, scan_all_nodes)
+            cache["nodes"] = {n["folder"]: n for n in nodes}
+            cache["updated"] = _now_iso()
+            _save_cache(cache)
+        else:
+            logger.info(f"Update check: using cached node list ({len(nodes)} nodes)")
+
+        if not nodes:
+            logger.info("Update check: no nodes to check")
+            cache["updates"] = {}
+            cache["updates_checked"] = _now_iso()
+            _save_cache(cache)
+            return
+
+        def _prog(done, total):
+            if done % 10 == 0 or done == total:
+                logger.info(f"Update check: {done}/{total}")
+
+        result = await loop.run_in_executor(
+            None, update_checker.check_all_nodes, nodes, _prog
+        )
+
+        # Перечитываем кэш — за время работы что-то могло измениться
+        cache = _load_cache()
+        cache["updates"] = result["results"]
+        cache["updates_checked"] = _now_iso()
+        _save_cache(cache)
+
+        logger.info(
+            f"Update check done: {result['checked']}/{result['total']} "
+            f"({sum(1 for r in result['results'].values() if r.get('has_update'))} with updates)"
+        )
+    except Exception:
+        logger.exception("Update check failed")
+
+
+@PromptServer.instance.routes.post("/custom_node_manager/check_updates")
+async def api_check_updates(request):
+    """
+    Возвращает ответ мгновенно. Вся работа (скан при необходимости + ls-remote)
+    идёт в фоновом asyncio.Task.
+    """
+    global _update_check_task
+    if _update_check_task and not _update_check_task.done():
+        return web.json_response({"success": True, "already_running": True})
+
+    _update_check_task = asyncio.create_task(_run_update_check())
+    return web.json_response({"success": True, "started": True})
+
+
+@PromptServer.instance.routes.get("/custom_node_manager/updates")
+async def api_get_updates(request):
+    global _update_check_task
+    cache = _load_cache()
+    return web.json_response({
+        "success": True,
+        "updates": cache.get("updates", {}),
+        "checked_at": cache.get("updates_checked"),
+        "checking": bool(_update_check_task and not _update_check_task.done()),
+    })
+
+@PromptServer.instance.routes.post("/custom_node_manager/attach_remote")
+async def api_attach_remote(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json"}, status=400)
+
+    folder = (data.get("folder") or "").strip()
+    git_url = (data.get("git_url") or "").strip()
+    if not folder or not git_url:
+        return web.json_response({"error": "folder и git_url обязательны"}, status=400)
+
+    if not re.match(r"^(https?://|git@)", git_url):
+        return web.json_response({"error": "invalid git_url"}, status=400)
+
+    node_dir = _find_node_dir(folder)
+    if not node_dir:
+        return web.json_response({"error": f"Нода не найдена: {folder}"}, status=404)
+
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(
+            None, git_ops.attach_git_remote, node_dir, git_url, lambda m: None
+        )
+    except Exception as e:
+        logger.exception(f"attach_remote({folder}) упал")
+        return web.json_response({"error": str(e)}, status=500)
+
+    # Инвалидируем кэш — следующий scan перечитает .git
+    cache = _load_cache()
+    cache["nodes"] = {}
+    cache["updated"] = None
+    _save_cache(cache)
+
+    return web.json_response({"success": True, "folder": folder, **result})
+
+@PromptServer.instance.routes.get("/custom_node_manager/versions_remote/{folder}")
+async def api_versions_remote(request):
+    folder = request.match_info["folder"]
+    node_dir = _find_node_dir(folder)
+    if not node_dir:
+        return web.json_response({"error": f"Нода не найдена: {folder}"}, status=404)
+
+    git_url = git_ops._read_git_remote_url(node_dir)
+    if not git_url:
+        return web.json_response({"error": "no git remote"}, status=400)
+
+    parsed = github_client.GitHubClient.parse_git_url(git_url)
+    if not parsed:
+        return web.json_response({"error": "not a github repo"}, status=400)
+
+    owner, repo = parsed
+    client = _get_gh_client()
+
+    loop = asyncio.get_running_loop()
+    tags_raw = await loop.run_in_executor(None, client.get_tags, owner, repo)
+
+    if tags_raw is None:
+        return web.json_response({
+            "success": False,
+            "error": client.last_error or "github api unavailable",
+            "rate_limit_remaining": client.rate_limit_remaining,
+        }, status=502)
+
+    tags = []
+    for t in tags_raw[:github_client.MAX_TAGS_RETURN]:
+        commit = (t.get("commit") or {}).get("sha") or ""
+        tags.append({
+            "ref": t.get("name") or "",
+            "commit": commit[:7] if commit else "",
+        })
+
+    return web.json_response({
+        "success": True,
+        "source": "github",
+        "owner": owner,
+        "repo": repo,
+        "tags": tags,
+        "rate_limit_remaining": client.rate_limit_remaining,
+        "has_token": client.has_token,
+    })
+
+@PromptServer.instance.routes.post("/custom_node_manager/batch_update")
+async def api_batch_update(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json"}, status=400)
+
+    folders = data.get("folders") or []
+    if not isinstance(folders, list) or not folders:
+        return web.json_response({"error": "folders обязательны"}, status=400)
+
+    if not git_ops.git_available():
+        return web.json_response({"error": "git не найден в PATH"}, status=500)
+
+    items = []
+    for folder in folders:
+        folder = str(folder).strip()
+        if not folder:
+            continue
+        node_dir = _find_node_dir(folder)
+        if not node_dir:
+            continue
+        items.append({"folder": folder, "node_dir": node_dir})
+
+    if not items:
+        return web.json_response({"error": "не найдено ни одной ноды"}, status=404)
+
+    task = task_queue.submit("batch_update", {"items": items})
+    return web.json_response({
+        "success": True,
+        "task_id": task.id,
+        "total": len(items),
+    })
 
 WEB_DIRECTORY = "./web"
 

@@ -103,6 +103,38 @@ async def _run_task(task: Task) -> None:
                 _git_ops.remove_node, p["node_dir"], p["roots"],
             )
 
+        elif task.kind == "batch_update":
+            p = task.payload
+            items = p.get("items") or []
+            total = len(items)
+            results = []
+            for i, item in enumerate(items, 1):
+                folder = item.get("folder", "?")
+                node_dir = item.get("node_dir")
+                try:
+                    cb(f"[{i}/{total}] {folder}: starting")
+                    result = await loop.run_in_executor(
+                        None,
+                        lambda nd=node_dir: _git_ops.update_node(nd, None, cb),
+                    )
+                    results.append({"folder": folder, "ok": True, "result": result})
+                    cb(f"[{i}/{total}] {folder}: ✅ done")
+                except Exception as e:
+                    logger.exception(f"batch_update: {folder} failed")
+                    results.append({"folder": folder, "ok": False, "error": str(e)})
+                    cb(f"[{i}/{total}] {folder}: ❌ {e}")
+
+            succeeded = sum(1 for r in results if r["ok"])
+            failed = total - succeeded
+            task.result = {
+                "total": total,
+                "succeeded": succeeded,
+                "failed": failed,
+                "results": results,
+            }
+            cb(f"✅ Batch done: {succeeded}/{total} succeeded"
+               + (f", {failed} failed" if failed else ""))
+
         else:
             raise RuntimeError(f"Неизвестный тип задачи: {task.kind}")
 
