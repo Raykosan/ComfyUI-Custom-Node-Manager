@@ -827,7 +827,7 @@ async def api_versions_remote(request):
     if not node_dir:
         return web.json_response({"error": f"Нода не найдена: {folder}"}, status=404)
 
-    git_url = git_ops._read_git_remote_url(node_dir)
+    git_url = _read_git_remote_url(node_dir)
     if not git_url:
         return web.json_response({"error": "no git remote"}, status=400)
 
