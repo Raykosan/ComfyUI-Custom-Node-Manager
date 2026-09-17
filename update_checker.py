@@ -1,7 +1,17 @@
-"""
-Проверка обновлений нод через git ls-remote.
-Не использует GitHub API — только git-протокол, поэтому нет rate limit.
-"""
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2025-2026 Raykosan (RaykoStudio)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import os
 import logging
@@ -10,7 +20,7 @@ import concurrent.futures
 try:
     from . import git_ops
 except ImportError:
-    import git_ops  # type: ignore
+    import git_ops
 
 logger = logging.getLogger("CustomNodeManager.updates")
 
@@ -19,7 +29,6 @@ LS_REMOTE_TIMEOUT = 20.0
 
 
 def _parse_ls_remote(output: str) -> dict:
-    """Парсит вывод `git ls-remote` в {ref: sha}."""
     refs = {}
     for line in (output or "").splitlines():
         parts = line.split("\t", 1)
@@ -31,10 +40,6 @@ def _parse_ls_remote(output: str) -> dict:
 
 
 def check_single_node(node: dict) -> dict:
-    """
-    Определяет, ушла ли ветка origin вперёд относительно локального HEAD.
-    Вариант A: сравнение SHA локального HEAD с remote-tip ветки.
-    """
     folder = node.get("folder") or "?"
     node_dir = node.get("path")
     git_url = node.get("git_url")
@@ -69,7 +74,6 @@ def check_single_node(node: dict) -> dict:
     if branch and branch != "HEAD":
         remote_sha = refs.get(f"refs/heads/{branch}")
 
-    # Detached HEAD или ветка не найдена — пробуем origin/HEAD
     if not remote_sha:
         remote_sha = refs.get("HEAD")
 
@@ -85,7 +89,6 @@ def check_single_node(node: dict) -> dict:
 
 
 def check_all_nodes(nodes: list, progress_cb=None) -> dict:
-    """Параллельная проверка всех нод. Возвращает {folder: результат}."""
     results = {}
     total = len(nodes)
     done = 0

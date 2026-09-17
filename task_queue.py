@@ -1,7 +1,17 @@
-"""
-Асинхронная очередь задач для Custom Node Manager.
-Долгие операции (clone, pip install) уходят в executor, event loop не блокируется.
-"""
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2025-2026 Raykosan (RaykoStudio)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import asyncio
 import uuid
@@ -18,9 +28,9 @@ MAX_TASKS_KEPT = 100
 @dataclass
 class Task:
     id: str
-    kind: str                    # install | update | remove
+    kind: str
     payload: dict
-    status: str = "pending"      # pending | running | done | error
+    status: str = "pending"
     progress: str = ""
     log: list = field(default_factory=list)
     error: Optional[str] = None
@@ -39,7 +49,6 @@ def _now() -> str:
 
 
 def _trim_tasks() -> None:
-    """Не даём словарю расти бесконечно."""
     if len(TASKS) <= MAX_TASKS_KEPT:
         return
     done = [t for t in TASKS.values() if t.status in ("done", "error")]
@@ -49,7 +58,6 @@ def _trim_tasks() -> None:
 
 
 def submit(kind: str, payload: dict) -> Task:
-    """Создаёт задачу и ставит в очередь. Должна вызываться из работающего event loop."""
     ensure_worker()
     task = Task(id=uuid.uuid4().hex[:12], kind=kind, payload=payload, created=_now())
     TASKS[task.id] = task
@@ -70,11 +78,10 @@ def _progress_cb(task: Task):
 
 
 async def _run_task(task: Task) -> None:
-    # Импорт внутри — чтобы не тянуть git_ops до старта
     try:
         from . import git_ops as _git_ops
     except ImportError:
-        import git_ops as _git_ops  # type: ignore
+        import git_ops as _git_ops
 
     loop = asyncio.get_running_loop()
     cb = _progress_cb(task)
@@ -136,12 +143,12 @@ async def _run_task(task: Task) -> None:
                + (f", {failed} failed" if failed else ""))
 
         else:
-            raise RuntimeError(f"Неизвестный тип задачи: {task.kind}")
+            raise RuntimeError(f"Unknown task type: {task.kind}")
 
         task.status = "done"
-        cb("✅ Готово")
+        cb("✅ Done")
     except Exception as e:
-        logger.exception(f"[task {task.id}] ошибка")
+        logger.exception(f"[task {task.id}] error")
         task.status = "error"
         task.error = str(e)
         task.log.append(f"{_now()} ❌ {e}")
@@ -161,7 +168,6 @@ async def _worker_loop():
 
 
 def ensure_worker() -> None:
-    """Ленивый старт воркера. Вызывать из контекста работающего loop."""
     global _worker
     if _worker is None or _worker.done():
         _worker = asyncio.create_task(_worker_loop())

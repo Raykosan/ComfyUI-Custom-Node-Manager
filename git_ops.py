@@ -1,3 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2025-2026 Raykosan (RaykoStudio)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import os
 import re
 import sys
@@ -12,18 +27,15 @@ logger = logging.getLogger("CustomNodeManager.git")
 
 ProgressCb = Callable[[str], None]
 
-DEFAULT_GIT_TIMEOUT = 600.0   # clone / fetch
-DEFAULT_PIP_TIMEOUT = 1800.0  # pip install (торч иногда тянется долго)
+DEFAULT_GIT_TIMEOUT = 600.0
+DEFAULT_PIP_TIMEOUT = 1800.0
 
-
-# --- Низкоуровневые утилиты --------------------------------------------
 
 def git_available() -> bool:
     return shutil.which("git") is not None
 
 
 def run_git(cwd: Optional[str], *args: str, timeout: float = DEFAULT_GIT_TIMEOUT):
-    """Возвращает (rc, stdout, stderr). Никогда не бросает — только возвращает rc=-1."""
     cmd = ["git"]
     if cwd:
         cmd += ["-C", cwd]
@@ -43,7 +55,6 @@ def run_git(cwd: Optional[str], *args: str, timeout: float = DEFAULT_GIT_TIMEOUT
 
 
 def derive_folder_name(git_url: str) -> str:
-    """Из https://github.com/owner/repo.git → repo"""
     url = git_url.rstrip("/")
     if url.endswith(".git"):
         url = url[:-4]
@@ -58,10 +69,7 @@ def _is_within(base: str, candidate: str) -> bool:
     return cand_abs == base_abs or cand_abs.startswith(base_abs + os.sep)
 
 
-# --- pip ----------------------------------------------------------------
-
 def pip_install(cwd: str, requirements_file: str, progress: ProgressCb) -> dict:
-    """Устанавливает зависимости. Не бросает при ошибке — возвращает dict с rc/выводом."""
     cmd = [sys.executable, "-m", "pip", "install", "-r", requirements_file]
     progress(f"pip install -r {os.path.basename(requirements_file)}")
     try:
@@ -80,47 +88,40 @@ def pip_install(cwd: str, requirements_file: str, progress: ProgressCb) -> dict:
         return {"rc": -1, "error": str(e)}
 
 
-# --- Установка ----------------------------------------------------------
-
 def install_node(
     git_url: str,
     target_dir: str,
     version: Optional[str] = None,
     progress: ProgressCb = lambda msg: None,
 ) -> dict:
-    """
-    Клонирует репозиторий в target_dir.
-    Если задан version (tag/branch/commit) — делает checkout.
-    Затем ставит requirements.txt, если он есть.
-    """
     if not git_available():
-        raise RuntimeError("git не найден в PATH")
+        raise RuntimeError("git was not found in the PATH")
     if os.path.exists(target_dir):
-        raise RuntimeError(f"Папка уже существует: {target_dir}")
+        raise RuntimeError(f"The folder already exists: {target_dir}")
 
     progress(f"git clone {git_url}")
     rc, out, err = run_git(None, "clone", "--recursive", git_url, target_dir)
     if rc != 0:
         shutil.rmtree(target_dir, ignore_errors=True)
-        raise RuntimeError(f"git clone не удался: {err or out}")
+        raise RuntimeError(f"git clone failed: {err or out}")
 
     if version:
         progress(f"git checkout {version}")
         rc, out, err = run_git(target_dir, "checkout", version)
         if rc != 0:
-            raise RuntimeError(f"git checkout {version} не удался: {err or out}")
+            raise RuntimeError(f"git checkout {version} failed: {err or out}")
 
     pip_result = None
     req = os.path.join(target_dir, "requirements.txt")
     if os.path.isfile(req):
         pip_result = pip_install(target_dir, req, progress)
         if pip_result.get("rc", -1) != 0:
-            progress("⚠️ pip install завершился с ошибкой — проверьте лог")
+            progress("⚠️ pip install failed with an error — check the log")
     else:
-        progress("requirements.txt отсутствует — пропускаем pip")
+        progress("requirements.txt missing — skip pip")
 
     if os.path.isfile(os.path.join(target_dir, "install.py")):
-        progress("⚠️ Обнаружен install.py — запустите вручную при необходимости")
+        progress("⚠️ Detected install.py — run manually if necessary")
 
     return {
         "folder": os.path.basename(target_dir),
@@ -129,24 +130,16 @@ def install_node(
     }
 
 
-# --- Обновление ---------------------------------------------------------
-
 def update_node(
     node_dir: str,
     version: Optional[str] = None,
     progress: ProgressCb = lambda msg: None,
 ) -> dict:
-    """
-    Обновляет ноду.
-    Если есть незакоммиченные изменения — делает auto-stash (включая untracked),
-    чтобы switch прошёл без потери данных. Stash восстанавливается вручную.
-    """
     if not git_available():
-        raise RuntimeError("git не найден в PATH")
+        raise RuntimeError("git was not found in the PATH")
     if not os.path.isdir(os.path.join(node_dir, ".git")):
-        raise RuntimeError(f"Не git-репозиторий: {node_dir}")
+        raise RuntimeError(f"Not a git repository: {node_dir}")
 
-    # --- Auto-stash при dirty ---
     stashed = None
     rc, out, _ = run_git(node_dir, "status", "--porcelain")
     if rc == 0 and out.strip():
@@ -155,31 +148,31 @@ def update_node(
         progress(f"Local changes detected → stashing as {stash_msg}")
         rc, out, err = run_git(node_dir, "stash", "push", "-u", "-m", stash_msg)
         if rc != 0:
-            raise RuntimeError(f"git stash не удался: {err or out}")
+            raise RuntimeError(f"git stash failed: {err or out}")
         stashed = stash_msg
 
     progress("git fetch --tags --prune")
     rc, out, err = run_git(node_dir, "fetch", "--tags", "--prune")
     if rc != 0:
-        raise RuntimeError(f"git fetch не удался: {err or out}")
+        raise RuntimeError(f"git fetch failed: {err or out}")
 
     if version:
         progress(f"git checkout {version}")
         rc, out, err = run_git(node_dir, "checkout", version)
         if rc != 0:
-            raise RuntimeError(f"git checkout {version} не удался: {err or out}")
+            raise RuntimeError(f"git checkout {version} failed: {err or out}")
     else:
         progress("git pull --ff-only")
         rc, out, err = run_git(node_dir, "pull", "--ff-only")
         if rc != 0:
-            raise RuntimeError(f"git pull не удался: {err or out}")
+            raise RuntimeError(f"git pull failed: {err or out}")
 
     pip_result = None
     req = os.path.join(node_dir, "requirements.txt")
     if os.path.isfile(req):
         pip_result = pip_install(node_dir, req, progress)
         if pip_result.get("rc", -1) != 0:
-            progress("⚠️ pip install завершился с ошибкой — проверьте лог")
+            progress("⚠️ pip install failed with an error — check the log")
 
     if stashed:
         progress(f"✅ Local changes saved as {stashed}")
@@ -188,10 +181,7 @@ def update_node(
     return {"pip": pip_result, "stashed": stashed}
 
 
-# --- Удаление -----------------------------------------------------------
-
 def _rmtree_onerror(func, path, exc_info):
-    """Windows: .git-объекты могут быть read-only."""
     try:
         os.chmod(path, stat.S_IWRITE)
         func(path)
@@ -200,24 +190,19 @@ def _rmtree_onerror(func, path, exc_info):
 
 
 def remove_node(node_dir: str, custom_nodes_roots: list[str]) -> None:
-    """Удаляет папку ноды с защитой от случайного выхода за пределы custom_nodes."""
     real = os.path.realpath(node_dir)
 
-    # Нельзя удалить корень custom_nodes
     for root in custom_nodes_roots:
         if real == os.path.realpath(root):
-            raise RuntimeError("Отказ: попытка удалить корень custom_nodes")
+            raise RuntimeError("Failure: attempt to delete the custom_nodes root")
 
-    # node_dir должен лежать внутри одного из корней
     if not any(_is_within(root, real) for root in custom_nodes_roots):
-        raise RuntimeError(f"Отказ: {real} вне custom_nodes")
+        raise RuntimeError(f"Rejection: {real} outside of custom_nodes")
 
     if not os.path.isdir(real):
-        raise RuntimeError(f"Не папка: {real}")
+        raise RuntimeError(f"Not a folder: {real}")
 
     shutil.rmtree(real, onerror=_rmtree_onerror)
-
-# --- Список версий ------------------------------------------------------
 
 def _git_lines(node_dir: str, *args: str, timeout: float = 10.0) -> list[str]:
     rc, out, _ = run_git(node_dir, *args, timeout=timeout)
@@ -227,14 +212,9 @@ def _git_lines(node_dir: str, *args: str, timeout: float = 10.0) -> list[str]:
 
 
 def list_versions(node_dir: str, max_tags: int = 15) -> dict:
-    """
-    Возвращает текущее состояние ноды и последние max_tags тегов
-    (сортировка по дате создания, свежие сверху).
-    """
     if not os.path.isdir(os.path.join(node_dir, ".git")):
-        raise RuntimeError(f"Не git-репозиторий: {node_dir}")
+        raise RuntimeError(f"Not a git repository: {node_dir}")
 
-    # --- Текущее состояние ---
     current = {
         "branch": None, "tag": None,
         "commit": None, "commit_short": None,
@@ -252,7 +232,6 @@ def list_versions(node_dir: str, max_tags: int = 15) -> dict:
         current["tag"] = t[0]
     current["dirty"] = bool(_git_lines(node_dir, "status", "--porcelain"))
 
-    # --- Теги (только ref + дата, до max_tags) ---
     tags = []
     for line in _git_lines(
         node_dir,
@@ -270,20 +249,12 @@ def list_versions(node_dir: str, max_tags: int = 15) -> dict:
 
     return {"current": current, "tags": tags}
 
-# --- Stash ---------------------------------------------------------------
-
 _STASH_REF_RE = re.compile(r"^stash@\{\d+\}$")
 
 
 def list_stashes(node_dir: str) -> list:
-    """
-    Возвращает список stash'ей с расширенной информацией:
-    - файлы со статусами (M/A/D/R/C/U)
-    - статистика (files_changed, insertions, deletions)
-    - базовый коммит (где был HEAD в момент stash'а)
-    """
     if not os.path.isdir(os.path.join(node_dir, ".git")):
-        raise RuntimeError(f"Не git-репозиторий: {node_dir}")
+        raise RuntimeError(f"Not a git repository: {node_dir}")
 
     stashes = []
     for line in _git_lines(node_dir, "stash", "list", "--format=%gd|%ci|%gs"):
@@ -294,7 +265,6 @@ def list_stashes(node_dir: str) -> list:
         date = parts[1][:19]
         message = parts[2]
 
-        # --- Файлы со статусами ---
         files = []
         for fline in _git_lines(node_dir, "stash", "show", "--name-status", "-u", ref):
             cols = fline.split("\t")
@@ -303,7 +273,6 @@ def list_stashes(node_dir: str) -> list:
                 path = cols[-1].strip()
                 files.append({"status": status, "path": path})
 
-        # --- Shortstat ---
         files_changed = 0
         insertions = 0
         deletions = 0
@@ -320,11 +289,9 @@ def list_stashes(node_dir: str) -> list:
             if m:
                 deletions = int(m.group(1))
 
-        # Если shortstat не отдал количество файлов — берём из files
         if not files_changed:
             files_changed = len(files)
 
-        # --- Базовый коммит (родитель stash-коммита) ---
         base = {"commit_short": None, "subject": None, "tag": None}
         base_line = _git_lines(node_dir, "log", "-1", "--format=%h|%s", f"{ref}^")
         if base_line:
@@ -349,62 +316,50 @@ def list_stashes(node_dir: str) -> list:
 
 
 def pop_stash(node_dir: str, ref: str) -> dict:
-    """Применяет stash к рабочему дереву и удаляет его из списка."""
     if not os.path.isdir(os.path.join(node_dir, ".git")):
-        raise RuntimeError(f"Не git-репозиторий: {node_dir}")
+        raise RuntimeError(f"Not a git repository: {node_dir}")
     if not _STASH_REF_RE.match(ref or ""):
-        raise RuntimeError(f"Неверный ref: {ref}")
+        raise RuntimeError(f"Invalid ref: {ref}")
 
     rc, out, err = run_git(node_dir, "stash", "pop", ref)
     if rc != 0:
-        # При конфликте stash остаётся в списке — ничего не потеряно
-        raise RuntimeError(f"git stash pop не удался: {err or out}")
+        raise RuntimeError(f"git stash pop failed: {err or out}")
     return {"output": out}
 
 
 def drop_stash(node_dir: str, ref: str) -> dict:
-    """Удаляет stash без применения."""
     if not os.path.isdir(os.path.join(node_dir, ".git")):
-        raise RuntimeError(f"Не git-репозиторий: {node_dir}")
+        raise RuntimeError(f"Not a git repository: {node_dir}")
     if not _STASH_REF_RE.match(ref or ""):
-        raise RuntimeError(f"Неверный ref: {ref}")
+        raise RuntimeError(f"Invalid ref: {ref}")
 
     rc, out, err = run_git(node_dir, "stash", "drop", ref)
     if rc != 0:
-        raise RuntimeError(f"git stash drop не удался: {err or out}")
+        raise RuntimeError(f"git stash drop failed: {err or out}")
     return {"output": out}
-
-# --- Attach remote -------------------------------------------------------
 
 def attach_git_remote(
     node_dir: str,
     git_url: str,
     progress: ProgressCb = lambda msg: None,
 ) -> dict:
-    """
-    Превращает обычную папку в git-репозиторий, привязанный к origin.
-    Если .git уже есть — просто добавляет/меняет remote.
-    Содержимое файлов НЕ перезаписывается: reset --soft двигает только HEAD.
-    """
     if not git_available():
-        raise RuntimeError("git не найден в PATH")
+        raise RuntimeError("git was not found in the PATH")
     if not os.path.isdir(node_dir):
-        raise RuntimeError(f"Не папка: {node_dir}")
+        raise RuntimeError(f"Not a folder: {node_dir}")
     if not git_url or not re.match(r"^(https?://|git@)", git_url):
-        raise RuntimeError(f"Некорректный git URL: {git_url}")
+        raise RuntimeError(f"Invalid git URL: {git_url}")
 
     git_dir = os.path.join(node_dir, ".git")
     initialized = False
 
-    # 1. git init (если .git ещё нет)
     if not os.path.isdir(git_dir):
         progress("git init")
         rc, out, err = run_git(node_dir, "init", "-q")
         if rc != 0:
-            raise RuntimeError(f"git init не удался: {err or out}")
+            raise RuntimeError(f"git init failed: {err or out}")
         initialized = True
 
-    # 2. remote add / set-url
     rc, out, _ = run_git(node_dir, "remote", "get-url", "origin")
     if rc == 0:
         progress("git remote set-url origin")
@@ -413,15 +368,13 @@ def attach_git_remote(
         progress("git remote add origin")
         rc, out, err = run_git(node_dir, "remote", "add", "origin", git_url)
     if rc != 0:
-        raise RuntimeError(f"git remote не удался: {err or out}")
+        raise RuntimeError(f"git remote failed: {err or out}")
 
-    # 3. fetch
     progress(f"git fetch origin")
     rc, out, err = run_git(node_dir, "fetch", "origin", "--tags", "--prune")
     if rc != 0:
-        raise RuntimeError(f"git fetch не удался: {err or out}")
+        raise RuntimeError(f"git fetch failed: {err or out}")
 
-    # 4. Определяем default branch
     run_git(node_dir, "remote", "set-head", "origin", "-a")
     rc, out, _ = run_git(node_dir, "symbolic-ref", "refs/remotes/origin/HEAD")
     default_branch = None
@@ -429,26 +382,22 @@ def attach_git_remote(
         default_branch = out.strip().split("/")[-1]
 
     if not default_branch:
-        # Fallback: первая ветка из ls-remote
         rc, out, _ = run_git(node_dir, "ls-remote", "--symref", "origin", "HEAD")
         m = re.search(r"ref:\s+refs/heads/(\S+)\s+HEAD", out or "")
         if m:
             default_branch = m.group(1)
 
     if not default_branch:
-        raise RuntimeError("Не удалось определить default branch на origin")
+        raise RuntimeError("Couldn't define default branch on origin")
 
-    # 5. reset --soft: сдвигаем HEAD на origin, файлы оставляем как есть
     progress(f"git reset --soft origin/{default_branch}")
     rc, out, err = run_git(node_dir, "reset", "--soft", f"origin/{default_branch}")
     if rc != 0:
         raise RuntimeError(f"git reset не удался: {err or out}")
 
-    # 6. Локальная ветка = default_branch
     run_git(node_dir, "branch", "-M", default_branch)
     run_git(node_dir, "branch", "--set-upstream-to", f"origin/{default_branch}")
 
-    # Считаем, сколько файлов отличается (для отчёта юзеру)
     rc, out, _ = run_git(node_dir, "status", "--porcelain")
     diff_count = len([l for l in (out or "").splitlines() if l.strip()])
 

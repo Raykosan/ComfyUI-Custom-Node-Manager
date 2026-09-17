@@ -1,3 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2025-2026 Raykosan (RaykoStudio)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import os
 import sys
 import re
@@ -10,7 +25,6 @@ import datetime as _dt
 from aiohttp import web
 from server import PromptServer
 
-# Соседние модули (работает и как пакет, и как top-level)
 try:
     from . import git_ops
     from . import task_queue
@@ -21,22 +35,18 @@ except ImportError:
     _here = os.path.dirname(os.path.abspath(__file__))
     if _here not in _sys.path:
         _sys.path.insert(0, _here)
-    import git_ops          # type: ignore
-    import task_queue       # type: ignore
-    import update_checker   # type: ignore
-    import github_client    # type: ignore
+    import git_ops
+    import task_queue
+    import update_checker
+    import github_client
 
 logger = logging.getLogger("CustomNodeManager")
-
-# --- Пути ---------------------------------------------------------------
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 COMFYUI_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))
 CACHE_FILE = os.path.join(CURRENT_DIR, "cache.json")
 WEB_DIR = os.path.join(CURRENT_DIR, "web")
-# Фоновая задача проверки обновлений
 _update_check_task = None
-# GitHub-клиент создаётся лениво, при первом обращении
 _gh_client = None
 _gh_token_used = None
 
@@ -51,8 +61,6 @@ def _get_gh_client():
             f"GitHub client: {'with token' if token else 'without token (60 req/h)'}"
         )
     return _gh_client
-
-# --- Утилиты безопасности ----------------------------------------------
 
 def _is_within(base: str, candidate: str) -> bool:
     base_abs = os.path.realpath(base)
@@ -75,12 +83,10 @@ def _now_iso() -> str:
     return _dt.datetime.now().isoformat(timespec="seconds")
 
 
-# --- custom_nodes -------------------------------------------------------
-
 def get_custom_nodes_dirs() -> list[str]:
     dirs: list[str] = []
     try:
-        import folder_paths  # type: ignore
+        import folder_paths
         dirs = list(folder_paths.get_folder_paths("custom_nodes"))
     except Exception as e:
         logger.warning(f"folder_paths недоступен: {e}")
@@ -97,8 +103,6 @@ def get_custom_nodes_dirs() -> list[str]:
             result.append(real)
     return result
 
-
-# --- Git helpers --------------------------------------------------------
 
 def _normalize_git_url(url: str) -> str:
     m = re.match(r"^git@([^:]+):(.+?)(?:\.git)?$", url)
@@ -166,22 +170,7 @@ def _git_info(node_dir: str) -> dict:
     return info
 
 
-# --- Метаданные нод -----------------------------------------------------
-
 def _read_node_metadata(node_dir: str, tag: str = None) -> dict:
-    """
-    Собирает метаданные ноды из всех доступных источников.
-    Приоритет версии:
-      1. git tag (если HEAD точно на теге)
-      2. metadata.json
-      3. pyproject.toml
-      4. __init__.py (__version__)
-      5. version.py / _version.py
-      6. setup.py
-      7. package.json
-    Если ничего не найдено — версия остаётся None, вызывающий код
-    может добавить fallback через git describe.
-    """
     meta = {
         "name": os.path.basename(node_dir),
         "description": None,
@@ -191,13 +180,11 @@ def _read_node_metadata(node_dir: str, tag: str = None) -> dict:
         "repository": None,
     }
 
-    found = {}  # source -> version
+    found = {}
 
-    # --- 1. git tag ---
     if tag:
         found["tag"] = tag
 
-    # --- 2. metadata.json ---
     meta_json = os.path.join(node_dir, "metadata.json")
     if os.path.isfile(meta_json):
         try:
@@ -216,7 +203,6 @@ def _read_node_metadata(node_dir: str, tag: str = None) -> dict:
         except Exception:
             pass
 
-    # --- 3. pyproject.toml ---
     pyproj = os.path.join(node_dir, "pyproject.toml")
     if os.path.isfile(pyproj):
         try:
@@ -255,7 +241,6 @@ def _read_node_metadata(node_dir: str, tag: str = None) -> dict:
                     if v2 and "pyproject.toml" not in found:
                         found["pyproject.toml"] = str(v2)
 
-            # Regex fallback
             with open(pyproj, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
             if not meta["repository"]:
@@ -276,7 +261,6 @@ def _read_node_metadata(node_dir: str, tag: str = None) -> dict:
         except Exception:
             pass
 
-    # --- 4. __init__.py __version__ ---
     init_py = os.path.join(node_dir, "__init__.py")
     if os.path.isfile(init_py):
         try:
@@ -291,7 +275,6 @@ def _read_node_metadata(node_dir: str, tag: str = None) -> dict:
         except Exception:
             pass
 
-    # --- 5. version.py / _version.py / VERSION.py ---
     for fname in ("version.py", "_version.py", "VERSION.py"):
         vpath = os.path.join(node_dir, fname)
         if not os.path.isfile(vpath):
@@ -316,7 +299,6 @@ def _read_node_metadata(node_dir: str, tag: str = None) -> dict:
         except Exception:
             pass
 
-    # --- 6. setup.py ---
     setup_py = os.path.join(node_dir, "setup.py")
     if os.path.isfile(setup_py):
         try:
@@ -328,7 +310,6 @@ def _read_node_metadata(node_dir: str, tag: str = None) -> dict:
         except Exception:
             pass
 
-    # --- 7. package.json ---
     pkg_json = os.path.join(node_dir, "package.json")
     if os.path.isfile(pkg_json):
         try:
@@ -340,7 +321,6 @@ def _read_node_metadata(node_dir: str, tag: str = None) -> dict:
         except Exception:
             pass
 
-    # --- Приоритет источников ---
     priority = [
         "tag",
         "metadata.json",
@@ -358,7 +338,6 @@ def _read_node_metadata(node_dir: str, tag: str = None) -> dict:
             meta["version_source"] = src
             break
 
-    # --- Конфликты (все, кроме победителя) ---
     for src, v in found.items():
         if src != meta["version_source"] and v != meta["version"]:
             meta["version_conflicts"].append({"source": src, "version": v})
@@ -366,18 +345,12 @@ def _read_node_metadata(node_dir: str, tag: str = None) -> dict:
     return meta
 
 def _looks_like_node(node_dir: str) -> bool:
-    """
-    Эвристика: считаем папку ComfyUI-расширением, если в __init__.py есть
-    признаки регистрации нод, роутов или патчей ядра ComfyUI.
-    Плюс fallback по файлам-маркерам (install.py, requirements.txt и т.д.).
-    """
     init_py = os.path.join(node_dir, "__init__.py")
     if os.path.isfile(init_py):
         try:
             with open(init_py, "r", encoding="utf-8", errors="ignore") as f:
                 head = f.read(500_000)
 
-            # Сильные маркеры: экспорт нод / веб-ресурсов / роутов
             strong_markers = (
                 "NODE_CLASS_MAPPINGS",
                 "NODE_DISPLAY_NAME_MAPPINGS",
@@ -388,7 +361,6 @@ def _looks_like_node(node_dir: str) -> bool:
                 if m in head:
                     return True
 
-            # Слабые маркеры: работа с ядром ComfyUI (патчи attention, samplers, sd)
             weak_markers = (
                 "import comfy",
                 "from comfy",
@@ -402,7 +374,6 @@ def _looks_like_node(node_dir: str) -> bool:
                 if m in head:
                     return True
 
-            # Fallback: непустой __init__.py + есть requirements/install
             if len(head) > 200:
                 for marker in ("requirements.txt", "install.py", "pyproject.toml"):
                     if os.path.isfile(os.path.join(node_dir, marker)):
@@ -410,14 +381,11 @@ def _looks_like_node(node_dir: str) -> bool:
         except Exception:
             pass
 
-    # Без __init__.py — только явные маркеры
     for marker in ("pyproject.toml", "metadata.json", "install.py", "requirements.txt"):
         if os.path.isfile(os.path.join(node_dir, marker)):
             return True
     return False
 
-
-# --- Сканер -------------------------------------------------------------
 
 def _scan_single_node(node_dir: str):
     try:
@@ -435,11 +403,9 @@ def _scan_single_node(node_dir: str):
 
         meta = _read_node_metadata(node_dir, tag=git_info.get("tag"))
 
-        # Fallback: если файловые источники ничего не дали — пробуем git describe
         if not meta["version"]:
             desc = _git_run(node_dir, "describe", "--tags")
             if desc:
-                # "v7.5-5-gabc1234" -> "v7.5";  "v7.5" -> "v7.5"
                 clean = re.sub(r"-\d+-g[0-9a-f]+$", "", desc)
                 if clean:
                     meta["version"] = clean
@@ -470,7 +436,7 @@ def _scan_single_node(node_dir: str):
             "has_install_py": os.path.isfile(os.path.join(node_dir, "install.py")),
         }
     except Exception:
-        logger.exception(f"Ошибка сканирования {node_dir}")
+        logger.exception(f"Scan error {node_dir}")
         return None
 
 
@@ -480,7 +446,7 @@ def scan_all_nodes() -> list[dict]:
         try:
             entries = sorted(os.listdir(base))
         except OSError as e:
-            logger.warning(f"Не читается {base}: {e}")
+            logger.warning(f"Unreadable {base}: {e}")
             continue
         for entry in entries:
             node_dir = os.path.join(base, entry)
@@ -494,8 +460,6 @@ def scan_all_nodes() -> list[dict]:
                 nodes.append(info)
     return nodes
 
-
-# --- Кэш ----------------------------------------------------------------
 
 def _load_cache() -> dict:
     if not os.path.isfile(CACHE_FILE):
@@ -512,10 +476,8 @@ def _save_cache(cache: dict) -> None:
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(cache, f, indent=2, ensure_ascii=False)
     except Exception as e:
-        logger.warning(f"Не удалось сохранить кэш: {e}")
+        logger.warning(f"Couldn't save cache: {e}")
 
-
-# --- Helpers ------------------------------------------------------------
 
 def _find_node_dir(folder: str):
     for base in get_custom_nodes_dirs():
@@ -524,10 +486,6 @@ def _find_node_dir(folder: str):
             return safe
     return None
 
-
-# =======================================================================
-#  HTTP API
-# =======================================================================
 
 @PromptServer.instance.routes.get("/custom_node_manager/ping")
 async def api_ping(request):
@@ -540,7 +498,7 @@ async def api_scan(request):
     try:
         nodes = await loop.run_in_executor(None, scan_all_nodes)
     except Exception as e:
-        logger.exception("Ошибка сканирования")
+        logger.exception("Scan error")
         return web.json_response({"error": str(e)}, status=500)
 
     cache = _load_cache()
@@ -561,8 +519,6 @@ async def api_cache(request):
     return web.json_response({"success": True, **_load_cache()})
 
 
-# --- install ------------------------------------------------------------
-
 @PromptServer.instance.routes.post("/custom_node_manager/install")
 async def api_install(request):
     try:
@@ -575,7 +531,7 @@ async def api_install(request):
         return web.json_response({"error": "invalid git_url"}, status=400)
 
     if not git_ops.git_available():
-        return web.json_response({"error": "git не найден в PATH"}, status=500)
+        return web.json_response({"error": "git was not found in the PATH"}, status=500)
 
     folder = (data.get("folder") or "").strip() or git_ops.derive_folder_name(git_url)
     folder = re.sub(r"[^A-Za-z0-9_.\-]", "_", folder).strip("._")
@@ -586,12 +542,12 @@ async def api_install(request):
 
     roots = get_custom_nodes_dirs()
     if not roots:
-        return web.json_response({"error": "custom_nodes не найдены"}, status=500)
+        return web.json_response({"error": "custom_nodes not found"}, status=500)
 
     target_dir = os.path.join(roots[0], folder)
     if os.path.exists(target_dir):
         return web.json_response(
-            {"error": f"Папка уже существует: {folder}"}, status=409
+            {"error": f"The folder already exists: {folder}"}, status=409
         )
 
     task = task_queue.submit("install", {
@@ -606,8 +562,6 @@ async def api_install(request):
     })
 
 
-# --- update -------------------------------------------------------------
-
 @PromptServer.instance.routes.post("/custom_node_manager/update")
 async def api_update(request):
     try:
@@ -617,14 +571,14 @@ async def api_update(request):
 
     folder = (data.get("folder") or "").strip()
     if not folder:
-        return web.json_response({"error": "folder обязателен"}, status=400)
+        return web.json_response({"error": "folder is required"}, status=400)
 
     node_dir = _find_node_dir(folder)
     if not node_dir:
-        return web.json_response({"error": f"Нода не найдена: {folder}"}, status=404)
+        return web.json_response({"error": f"Node not found: {folder}"}, status=404)
 
     if not git_ops.git_available():
-        return web.json_response({"error": "git не найден в PATH"}, status=500)
+        return web.json_response({"error": "git was not found in the PATH"}, status=500)
 
     version = (data.get("version") or "").strip() or None
 
@@ -636,8 +590,6 @@ async def api_update(request):
     return web.json_response({"success": True, "task_id": task.id})
 
 
-# --- remove -------------------------------------------------------------
-
 @PromptServer.instance.routes.post("/custom_node_manager/remove")
 async def api_remove(request):
     try:
@@ -647,11 +599,11 @@ async def api_remove(request):
 
     folder = (data.get("folder") or "").strip()
     if not folder:
-        return web.json_response({"error": "folder обязателен"}, status=400)
+        return web.json_response({"error": "folder is required"}, status=400)
 
     node_dir = _find_node_dir(folder)
     if not node_dir:
-        return web.json_response({"error": f"Нода не найдена: {folder}"}, status=404)
+        return web.json_response({"error": f"Node not found: {folder}"}, status=404)
 
     roots = get_custom_nodes_dirs()
 
@@ -662,8 +614,6 @@ async def api_remove(request):
     })
     return web.json_response({"success": True, "task_id": task.id})
 
-
-# --- tasks --------------------------------------------------------------
 
 @PromptServer.instance.routes.get("/custom_node_manager/task/{task_id}")
 async def api_task(request):
@@ -701,30 +651,23 @@ async def api_tasks(request):
     })
 
 
-# --- restart ------------------------------------------------------------
-
 @PromptServer.instance.routes.post("/custom_node_manager/restart")
 async def api_restart(request):
     try:
-        logger.info("Перезапуск ComfyUI по запросу Custom Node Manager")
-        # os.execv на Windows использует _P_OVERLAY: процесс замещается
-        # на месте с тем же PID и той же консолью. cmd.exe, запустивший .bat,
-        # не видит завершения процесса, поэтому .bat не доходит до pause.
+        logger.info("Restarting ComfyUI at the request of the Custom Node Manager")
         os.execv(sys.executable, [sys.executable] + sys.argv)
     except Exception as e:
         logger.exception("Не удалось перезапустить")
         return web.json_response({"error": str(e)}, status=500)
-
-# =======================================================================
 
 @PromptServer.instance.routes.get("/custom_node_manager/versions/{folder}")
 async def api_versions(request):
     folder = request.match_info["folder"]
     node_dir = _find_node_dir(folder)
     if not node_dir:
-        return web.json_response({"error": f"Нода не найдена: {folder}"}, status=404)
+        return web.json_response({"error": f"Node not found: {folder}"}, status=404)
     if not git_ops.git_available():
-        return web.json_response({"error": "git не найден в PATH"}, status=500)
+        return web.json_response({"error": "git was not found in the PATH"}, status=500)
 
     loop = asyncio.get_running_loop()
     try:
@@ -735,22 +678,20 @@ async def api_versions(request):
 
     return web.json_response({"success": True, "folder": folder, **data})
 
-# --- stash endpoints ----------------------------------------------------
-
 @PromptServer.instance.routes.get("/custom_node_manager/stashes/{folder}")
 async def api_stashes(request):
     folder = request.match_info["folder"]
     node_dir = _find_node_dir(folder)
     if not node_dir:
-        return web.json_response({"error": f"Нода не найдена: {folder}"}, status=404)
+        return web.json_response({"error": f"Node not found: {folder}"}, status=404)
     if not git_ops.git_available():
-        return web.json_response({"error": "git не найден в PATH"}, status=500)
+        return web.json_response({"error": "git was not found in the PATH"}, status=500)
 
     loop = asyncio.get_running_loop()
     try:
         stashes = await loop.run_in_executor(None, git_ops.list_stashes, node_dir)
     except Exception as e:
-        logger.exception(f"list_stashes({folder}) упал")
+        logger.exception(f"list_stashes({folder}) dropped")
         return web.json_response({"error": str(e)}, status=500)
 
     return web.json_response({"success": True, "folder": folder, "stashes": stashes})
@@ -766,11 +707,11 @@ async def api_stash_pop(request):
     folder = (data.get("folder") or "").strip()
     ref = (data.get("ref") or "").strip()
     if not folder or not ref:
-        return web.json_response({"error": "folder и ref обязательны"}, status=400)
+        return web.json_response({"error": "folder and ref are required"}, status=400)
 
     node_dir = _find_node_dir(folder)
     if not node_dir:
-        return web.json_response({"error": f"Нода не найдена: {folder}"}, status=404)
+        return web.json_response({"error": f"Node not found: {folder}"}, status=404)
 
     loop = asyncio.get_running_loop()
     try:
@@ -791,11 +732,11 @@ async def api_stash_drop(request):
     folder = (data.get("folder") or "").strip()
     ref = (data.get("ref") or "").strip()
     if not folder or not ref:
-        return web.json_response({"error": "folder и ref обязательны"}, status=400)
+        return web.json_response({"error": "folder and ref are required"}, status=400)
 
     node_dir = _find_node_dir(folder)
     if not node_dir:
-        return web.json_response({"error": f"Нода не найдена: {folder}"}, status=404)
+        return web.json_response({"error": f"Node not found: {folder}"}, status=404)
 
     loop = asyncio.get_running_loop()
     try:
@@ -805,18 +746,10 @@ async def api_stash_drop(request):
 
     return web.json_response({"success": True, **result})
 
-# --- update check -------------------------------------------------------
-
 async def _run_update_check():
-    """
-    Фоновая проверка обновлений.
-    Сначала использует кэш нод из cache.json. Если кэш пустой — сканирует.
-    Затем гоняет git ls-remote по всем нодам.
-    """
     loop = asyncio.get_running_loop()
 
     try:
-        # 1. Пытаемся обойтись кэшем нод
         cache = _load_cache()
         cached_nodes = cache.get("nodes") or {}
         nodes = list(cached_nodes.values())
@@ -845,7 +778,6 @@ async def _run_update_check():
             None, update_checker.check_all_nodes, nodes, _prog
         )
 
-        # Перечитываем кэш — за время работы что-то могло измениться
         cache = _load_cache()
         cache["updates"] = result["results"]
         cache["updates_checked"] = _now_iso()
@@ -861,10 +793,6 @@ async def _run_update_check():
 
 @PromptServer.instance.routes.post("/custom_node_manager/check_updates")
 async def api_check_updates(request):
-    """
-    Возвращает ответ мгновенно. Вся работа (скан при необходимости + ls-remote)
-    идёт в фоновом asyncio.Task.
-    """
     global _update_check_task
     if _update_check_task and not _update_check_task.done():
         return web.json_response({"success": True, "already_running": True})
@@ -894,14 +822,14 @@ async def api_attach_remote(request):
     folder = (data.get("folder") or "").strip()
     git_url = (data.get("git_url") or "").strip()
     if not folder or not git_url:
-        return web.json_response({"error": "folder и git_url обязательны"}, status=400)
+        return web.json_response({"error": "folder and git_url are required"}, status=400)
 
     if not re.match(r"^(https?://|git@)", git_url):
         return web.json_response({"error": "invalid git_url"}, status=400)
 
     node_dir = _find_node_dir(folder)
     if not node_dir:
-        return web.json_response({"error": f"Нода не найдена: {folder}"}, status=404)
+        return web.json_response({"error": f"Node not found: {folder}"}, status=404)
 
     loop = asyncio.get_running_loop()
     try:
@@ -909,10 +837,9 @@ async def api_attach_remote(request):
             None, git_ops.attach_git_remote, node_dir, git_url, lambda m: None
         )
     except Exception as e:
-        logger.exception(f"attach_remote({folder}) упал")
+        logger.exception(f"attach_remote({folder}) dropped")
         return web.json_response({"error": str(e)}, status=500)
 
-    # Инвалидируем кэш — следующий scan перечитает .git
     cache = _load_cache()
     cache["nodes"] = {}
     cache["updated"] = None
@@ -925,7 +852,7 @@ async def api_versions_remote(request):
     folder = request.match_info["folder"]
     node_dir = _find_node_dir(folder)
     if not node_dir:
-        return web.json_response({"error": f"Нода не найдена: {folder}"}, status=404)
+        return web.json_response({"error": f"Node not found: {folder}"}, status=404)
 
     git_url = _read_git_remote_url(node_dir)
     if not git_url:
@@ -975,10 +902,10 @@ async def api_batch_update(request):
 
     folders = data.get("folders") or []
     if not isinstance(folders, list) or not folders:
-        return web.json_response({"error": "folders обязательны"}, status=400)
+        return web.json_response({"error": "folders are required"}, status=400)
 
     if not git_ops.git_available():
-        return web.json_response({"error": "git не найден в PATH"}, status=500)
+        return web.json_response({"error": "git was not found in the PATH"}, status=500)
 
     items = []
     for folder in folders:
@@ -991,7 +918,7 @@ async def api_batch_update(request):
         items.append({"folder": folder, "node_dir": node_dir})
 
     if not items:
-        return web.json_response({"error": "не найдено ни одной ноды"}, status=404)
+        return web.json_response({"error": "not a single node was found"}, status=404)
 
     task = task_queue.submit("batch_update", {"items": items})
     return web.json_response({

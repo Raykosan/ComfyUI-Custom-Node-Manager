@@ -1,0 +1,14 @@
+[project]
+name = "ComfyUI-Custom-Node-Manager"
+description = "Installing and updating custom nodes for ComfyUI"
+version = "0.1.0"
+license = { file = "LICENSE" }
+dependencies = ["requests>=2.28.0", "tomli>=2.0.0"]
+
+[project.urls]
+Repository = "https://github.com/Raykosan/ComfyUI-Custom-Node-Manager"
+
+[tool.comfy]
+PublisherId = "raykosan"
+DisplayName = "ComfyUI-Custom-Node-Manager"
+Icon = ""

@@ -4,10 +4,6 @@ console.log("🦊 CNM JS v18 (attach remote) loaded at", new Date().toLocaleTime
 
 const STORAGE_KEY = "CustomNodeManager.ShowTopbarIcon";
 
-// =======================================================================
-//  Модульное состояние
-// =======================================================================
-
 let _allNodes = [];
 let _query = "";
 let _listSource = "";
@@ -17,11 +13,7 @@ let _updatesCheckedAt = null;
 let _updatesChecking = false;
 let _filterHasUpdate = false;
 let _updatesPollTimer = null;
-let _selected = new Set();   // имена папок, выбранных для batch-обновления
-
-// =======================================================================
-//  i18n
-// =======================================================================
+let _selected = new Set();
 
 const I18N = {
     latest_version: {
@@ -300,7 +292,6 @@ function _t(key) {
     return entry[loc] || entry.en;
 }
 
-// Форматирование шаблонов вида "{n} files changed"
 function _tf(key, vars) {
     let s = _t(key);
     for (const [k, v] of Object.entries(vars || {})) {
@@ -308,10 +299,6 @@ function _tf(key, vars) {
     }
     return s;
 }
-
-// =======================================================================
-//  Регистрация расширения
-// =======================================================================
 
 app.registerExtension({
     name: "CustomNodeManager",
@@ -335,10 +322,6 @@ app.registerExtension({
         }
     },
 });
-
-// =======================================================================
-//  Settings entry
-// =======================================================================
 
 function buildSettingsEntry() {
     const container = document.createElement("div");
@@ -378,7 +361,6 @@ function buildSettingsEntry() {
     openBtn.style.alignSelf = "flex-start";
     openBtn.onclick = () => {
         closeComfySettingsDialog();
-        // Даём диалогу настроек анимацию закрытия, потом открываем наш
         setTimeout(openManagerModal, 80);
     };
 
@@ -386,10 +368,6 @@ function buildSettingsEntry() {
     container.appendChild(openBtn);
     return container;
 }
-
-// =======================================================================
-//  Топбар
-// =======================================================================
 
 function waitForActionBar(callback) {
     const existing = document.querySelector(".actionbar-container");
@@ -436,14 +414,7 @@ function injectTopbarButton(actionBar) {
     }
 }
 
-// =======================================================================
-//  Модальное окно
-// =======================================================================
-
-// Пытается закрыть диалог настроек ComfyUI несколькими способами.
-// Разные версии фронтенда используют разные API — пробуем по очереди.
 function closeComfySettingsDialog() {
-    // 1. Command API (ComfyUI frontend 1.55+)
     try {
         const cmd = app?.extensionManager?.command;
         if (cmd?.executeCommand) {
@@ -454,7 +425,6 @@ function closeComfySettingsDialog() {
         }
     } catch (e) {}
 
-    // 2. Прямой API настроек
     try {
         const dlg = app?.ui?.settings?.dialog;
         if (dlg && typeof dlg.close === "function") {
@@ -463,7 +433,6 @@ function closeComfySettingsDialog() {
         }
     } catch (e) {}
 
-    // 3. Fallback: ищем кнопку закрытия в DOM (PrimeVue Dialog)
     const selectors = [
         ".p-dialog.p-component .p-dialog-header-close",
         ".p-dialog .p-dialog-header-close",
@@ -474,7 +443,6 @@ function closeComfySettingsDialog() {
     for (const sel of selectors) {
         const buttons = document.querySelectorAll(sel);
         for (const btn of buttons) {
-            // offsetParent !== null → элемент видим (не display:none)
             if (btn.offsetParent !== null) {
                 btn.click();
                 return;
@@ -593,7 +561,6 @@ function openManagerModal() {
     toolbar.appendChild(updatesChip);
     toolbar.appendChild(statusEl);
 
-    // --- select bar (batch actions) ---
     const selectBar = document.createElement("div");
     selectBar.className = "cnm-select-bar";
     selectBar.id = "cnm-select-bar";
@@ -618,10 +585,6 @@ function openManagerModal() {
         maybeAutoCheckUpdates();
     })();
 }
-
-// =======================================================================
-//  Загрузка списка нод
-// =======================================================================
 
 async function loadNodes(refreshBtn, { preferCache = false } = {}) {
     const list = document.getElementById("cnm-list");
@@ -668,10 +631,6 @@ async function loadNodes(refreshBtn, { preferCache = false } = {}) {
     if (refreshBtn) refreshBtn.disabled = false;
 }
 
-// =======================================================================
-//  Updates
-// =======================================================================
-
 async function loadUpdates() {
     try {
         const res = await fetch("/custom_node_manager/updates", { cache: "no-store" });
@@ -704,7 +663,7 @@ async function triggerCheckUpdates() {
 }
 
 function maybeAutoCheckUpdates() {
-    const TTL_MS = 6 * 60 * 60 * 1000;   // 6 часов
+    const TTL_MS = 6 * 60 * 60 * 1000;
     const ts = _updatesCheckedAt ? Date.parse(_updatesCheckedAt) : 0;
     const stale = !ts || (Date.now() - ts > TTL_MS);
 
@@ -721,7 +680,7 @@ function startUpdatesPolling() {
     if (_updatesPollTimer) return;
 
     let attempts = 0;
-    const maxAttempts = 300;   // 5 минут максимум
+    const maxAttempts = 300;
 
     _updatesPollTimer = setInterval(async () => {
         attempts++;
@@ -781,14 +740,12 @@ function renderSelectBar() {
     bar.style.display = "flex";
     bar.innerHTML = "";
 
-    // Видимые сейчас ноды (после фильтров)
     const visible = filterNodes(_allNodes, _query);
     const visibleFolders = visible.map((n) => n.folder);
     const allSelected =
         visibleFolders.length > 0 &&
         visibleFolders.every((f) => _selected.has(f));
 
-    // Слева: Select all / Deselect all
     const selectAllBtn = document.createElement("button");
     selectAllBtn.className = "cnm-btn cnm-btn-small";
     const label = allSelected ? _t("deselect_all") : _t("select_all");
@@ -804,18 +761,15 @@ function renderSelectBar() {
     };
     bar.appendChild(selectAllBtn);
 
-    // Счётчик
     const counter = document.createElement("span");
     counter.className = "cnm-select-counter";
     counter.textContent = _tf("selected_count", { n: _selected.size });
     bar.appendChild(counter);
 
-    // Распорка
     const spacer = document.createElement("div");
     spacer.style.flex = "1 1 auto";
     bar.appendChild(spacer);
 
-    // Update N selected
     const updateBtn = document.createElement("button");
     updateBtn.className = "cnm-btn cnm-btn-primary cnm-btn-small";
     updateBtn.textContent = _tf("update_selected", { n: _selected.size });
@@ -823,7 +777,6 @@ function renderSelectBar() {
     updateBtn.onclick = runBatchUpdate;
     bar.appendChild(updateBtn);
 
-    // Clear
     const clearBtn = document.createElement("button");
     clearBtn.className = "cnm-btn cnm-btn-small";
     clearBtn.textContent = _t("clear_selection");
@@ -834,10 +787,6 @@ function renderSelectBar() {
     };
     bar.appendChild(clearBtn);
 }
-
-// =======================================================================
-//  Фильтр + рендер списка
-// =======================================================================
 
 function filterNodes(nodes, query) {
     let result = nodes;
@@ -871,7 +820,6 @@ function applyFilterAndRender() {
     const list = document.getElementById("cnm-list");
     if (!list) return;
 
-    // Если включён фильтр updates, но обновлений больше нет — выключаем
     const updCount = Object.values(_updates).filter((u) => u && u.has_update).length;
     if (_filterHasUpdate && updCount === 0) {
         _filterHasUpdate = false;
@@ -1090,7 +1038,6 @@ function versionBadge(version, source, conflicts) {
         b.appendChild(sep);
     }
 
-    // Tooltip: источник + конфликты
     const lines = [];
     if (source) lines.push(`Version source: ${source}`);
     if (conflicts && conflicts.length) {
@@ -1103,10 +1050,6 @@ function versionBadge(version, source, conflicts) {
 
     return b;
 }
-
-// =======================================================================
-//  Действия
-// =======================================================================
 
 async function installFromUrl() {
     const res = await cnmPrompt({
@@ -1169,8 +1112,6 @@ async function askAndSwitchVersion(node) {
             },
         });
     } else {
-        // Checkout конкретной версии — флаг обновления НЕ снимаем:
-        // пользователь мог осознанно откатиться на старую версию.
         await runTask({
             url: "/custom_node_manager/update",
             body: { folder: node.folder, version: choice.ref },
@@ -1302,12 +1243,7 @@ async function runBatchUpdate() {
     }
 }
 
-// =======================================================================
-//  Версии
-// =======================================================================
-
 async function _fetchVersions(folder) {
-    // 1. Пробуем GitHub API (точный список тегов)
     try {
         const res = await fetch(
             `/custom_node_manager/versions_remote/${encodeURIComponent(folder)}`,
@@ -1328,7 +1264,6 @@ async function _fetchVersions(folder) {
                     })),
                 };
             }
-            // 502/ошибка — тихо падаем на локальные теги
             if (data && data.error) {
                 console.warn("🦊 GitHub API:", data.error,
                     data.rate_limit_remaining != null
@@ -1340,7 +1275,6 @@ async function _fetchVersions(folder) {
         console.warn("🦊 GitHub API недоступен, fallback на локальные теги");
     }
 
-    // 2. Fallback на локальные теги
     try {
         const res = await fetch(
             `/custom_node_manager/versions/${encodeURIComponent(folder)}`,
@@ -1355,10 +1289,6 @@ async function _fetchVersions(folder) {
         return null;
     }
 }
-
-// =======================================================================
-//  Stash picker
-// =======================================================================
 
 async function _fetchStashes(folder) {
     try {
@@ -1403,7 +1333,6 @@ async function openStashPicker(node) {
     }
 }
 
-// Возвращает true, если что-то было restore/drop'нуто — тогда надо обновить список нод
 function cnmStashPicker({ folder, stashes }) {
     return new Promise((resolve) => {
         let currentStashes = [...stashes];
@@ -1418,7 +1347,6 @@ function cnmStashPicker({ folder, stashes }) {
         hint.textContent = _t("version_picker_hint");
         body.appendChild(hint);
 
-        // Маленькая подпись источника данных
         const srcLabel = document.createElement("div");
         srcLabel.className = "cnm-ver-source";
         if (source === "github") {
@@ -1692,10 +1620,6 @@ function cnmStashPicker({ folder, stashes }) {
     });
 }
 
-// =======================================================================
-//  Задачи
-// =======================================================================
-
 async function runTask({ url, body, title, onSuccess }) {
     let taskId;
     console.log("🦊 CNM runTask →", "POST", url, body);
@@ -1789,7 +1713,6 @@ function showTaskPanel(title, taskId, opts = {}) {
                 progressEl.textContent = "✅ Готово";
                 progressEl.classList.add("cnm-task-ok");
                 progressEl.classList.remove("cnm-task-err");
-                // Уведомляем вызывающий код об успехе (например, снять флаг has_update)
                 if (typeof onSuccess === "function") {
                     try { onSuccess(t); } catch (e) {
                         console.error("🦊 onSuccess callback error:", e);
@@ -1848,10 +1771,6 @@ function pollPing(restartBtn) {
         }
     }, 2000);
 }
-
-// =======================================================================
-//  Диалог: prompt
-// =======================================================================
 
 function cnmPrompt(opts) {
     return new Promise((resolve) => {
@@ -1953,10 +1872,6 @@ function cnmPrompt(opts) {
     });
 }
 
-// =======================================================================
-//  Диалог: confirm
-// =======================================================================
-
 function cnmConfirm(opts) {
     return new Promise((resolve) => {
         const { title, message, okText = "OK", cancelText = "Cancel", danger = false } = opts || {};
@@ -2004,10 +1919,6 @@ function cnmConfirm(opts) {
     });
 }
 
-// =======================================================================
-//  Диалог: alert
-// =======================================================================
-
 function cnmAlert(opts) {
     return new Promise((resolve) => {
         const { title, message, okText = "OK", danger = false } = opts || {};
@@ -2045,10 +1956,6 @@ function cnmAlert(opts) {
     });
 }
 
-// =======================================================================
-//  Диалог: version picker
-// =======================================================================
-
 function cnmVersionPicker({ title, branch, currentTag, tags, source }) {
     return new Promise((resolve) => {
         const { overlay, body, footer } = _buildDialogShell({ title });
@@ -2076,7 +1983,6 @@ function cnmVersionPicker({ title, branch, currentTag, tags, source }) {
         if (tags && tags.length) {
             for (const t of tags) {
                 const isCurrent = !!(currentTag && t.ref === currentTag);
-                // Если дата есть — показываем её, иначе commit-хеш
                 const meta = t.date || t.commit || "";
                 const row = _makeVersionRow({
                     star: "",
@@ -2162,10 +2068,6 @@ function _makeVersionRow({ star, ref, refIsCode, date, current, disabled, toolti
     return row;
 }
 
-// =======================================================================
-//  Каркас диалога
-// =======================================================================
-
 function _buildDialogShell({ title, danger }) {
     const overlay = document.createElement("div");
     overlay.className = "cnm-pop-overlay";
@@ -2196,10 +2098,6 @@ function _buildDialogShell({ title, danger }) {
 
     return { overlay, pop, body, footer };
 }
-
-// =======================================================================
-//  Stash helpers
-// =======================================================================
 
 const STATUS_TITLE = {
     M: "Modified",
@@ -2238,10 +2136,6 @@ function makeFileRow(f) {
 
     return line;
 }
-
-// =======================================================================
-//  Стили
-// =======================================================================
 
 function injectStyles() {
     if (document.getElementById("cnm-styles")) return;
@@ -2441,7 +2335,7 @@ function injectStyles() {
         .cnm-task-log:empty { display: none; }
         .cnm-task-actions { display: flex; gap: 6px; }
 
-        /* ---------- Кастомные диалоги ---------- */
+        /* ---------- Custom dialogues ---------- */
         .cnm-pop-overlay {
             position: fixed; inset: 0;
             background: rgba(0,0,0,0.7);
@@ -2809,10 +2703,6 @@ function injectStyles() {
     `;
     document.head.appendChild(style);
 }
-
-// =======================================================================
-//  Утилиты
-// =======================================================================
 
 function _isNetworkError(e) {
     if (!e) return false;
