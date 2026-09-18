@@ -1,14 +1,19 @@
 [project]
 name = "ComfyUI-Custom-Node-Manager"
-description = "Installing and updating custom nodes for ComfyUI"
 version = "0.1.1"
+description = "Alternative manager for custom_nodes that bypasses ComfyUI Manager restrictions"
+readme = "README.md"
 license = { file = "LICENSE" }
-dependencies = ["requests>=2.28.0", "tomli>=2.0.0"]
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.28.0",
+    "tomli>=2.0.0; python_version < '3.11'",
+]
 
 [project.urls]
 Repository = "https://github.com/Raykosan/ComfyUI-Custom-Node-Manager"
+Issues = "https://github.com/Raykosan/ComfyUI-Custom-Node-Manager/issues"
 
-[tool.comfy]
-PublisherId = "raykosan"
-DisplayName = "ComfyUI-Custom-Node-Manager"
-Icon = ""
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
