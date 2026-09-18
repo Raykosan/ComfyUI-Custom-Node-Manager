@@ -38,6 +38,12 @@ class Task:
     created: str = ""
     finished: Optional[str] = None
 
+_post_success_hook = None
+
+
+def set_post_success_hook(hook):
+    global _post_success_hook
+    _post_success_hook = hook
 
 TASKS: dict[str, Task] = {}
 _queue: "asyncio.Queue[Task]" = asyncio.Queue()
@@ -147,6 +153,12 @@ async def _run_task(task: Task) -> None:
 
         task.status = "done"
         cb("✅ Done")
+
+        if _post_success_hook:
+            try:
+                _post_success_hook(task)
+            except Exception:
+                logger.exception(f"[task {task.id}] post-success hook error")
     except Exception as e:
         logger.exception(f"[task {task.id}] error")
         task.status = "error"

@@ -1,6 +1,6 @@
 import { app } from "../../../scripts/app.js";
 
-console.log("🦊 CNM JS v18 (attach remote) loaded at", new Date().toLocaleTimeString());
+console.log("🦊 CNM JS v19 (attach remote) loaded at", new Date().toLocaleTimeString());
 
 const STORAGE_KEY = "CustomNodeManager.ShowTopbarIcon";
 
@@ -495,7 +495,7 @@ function openManagerModal() {
 
     const header = document.createElement("div");
     header.className = "cnm-header";
-    header.innerHTML = `<div class="cnm-title">🦊 Custom Node Manager <span style="font-size:11px;color:var(--descrip-text);font-weight:400;">(js v18)</span></div>`;
+    header.innerHTML = `<div class="cnm-title">🦊 Custom Node Manager <span style="font-size:11px;color:var(--descrip-text);font-weight:400;">(js v19)</span></div>`;
 
     const closeBtn = document.createElement("button");
     closeBtn.className = "cnm-btn cnm-btn-small";
@@ -1740,6 +1740,11 @@ function showTaskPanel(title, taskId, opts = {}) {
                 progressEl.textContent = "✅ Готово";
                 progressEl.classList.add("cnm-task-ok");
                 progressEl.classList.remove("cnm-task-err");
+
+                try { await loadUpdates(); } catch (e) {
+                    console.warn("🦊 loadUpdates after task failed:", e);
+                }
+
                 if (typeof onSuccess === "function") {
                     try { onSuccess(t); } catch (e) {
                         console.error("🦊 onSuccess callback error:", e);

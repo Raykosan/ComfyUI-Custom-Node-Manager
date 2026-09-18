@@ -440,6 +440,60 @@ def _scan_single_node(node_dir: str):
         return None
 
 
+def _post_update_refresh(folders: list) -> None:
+    cache = _load_cache()
+    nodes = cache.get("nodes") or {}
+    updates = cache.get("updates") or {}
+    changed = False
+
+    for folder in folders:
+        if not folder:
+            continue
+        node_dir = _find_node_dir(folder)
+        if not node_dir:
+            continue
+
+        info = _scan_single_node(node_dir)
+        if info:
+            info["base"] = os.path.dirname(node_dir)
+            nodes[folder] = info
+            changed = True
+
+        if folder in updates:
+            del updates[folder]
+            changed = True
+
+    if changed:
+        cache["nodes"] = nodes
+        cache["updates"] = updates
+        _save_cache(cache)
+        logger.info(f"Cache refreshed for: {', '.join(folders)}")
+
+
+def _on_task_success(task) -> None:
+    try:
+        kind = task.kind
+        if kind == "update":
+            folders = [task.payload.get("folder")]
+        elif kind == "batch_update":
+            results = (task.result or {}).get("results") or []
+            folders = [
+                r.get("folder")
+                for r in results
+                if r.get("ok") and r.get("folder")
+            ]
+        elif kind == "install":
+            folders = [task.payload.get("folder")]
+        else:
+            return
+
+        folders = [f for f in folders if f]
+        if folders:
+            _post_update_refresh(folders)
+    except Exception:
+        logger.exception("post-success hook failed")
+
+
 def scan_all_nodes() -> list[dict]:
     nodes, seen = [], set()
     for base in get_custom_nodes_dirs():
@@ -926,6 +980,8 @@ async def api_batch_update(request):
         "task_id": task.id,
         "total": len(items),
     })
+
+task_queue.set_post_success_hook(_on_task_success)
 
 WEB_DIRECTORY = "./web"
 

@@ -68,6 +68,20 @@ def _is_within(base: str, candidate: str) -> bool:
     cand_abs = os.path.realpath(candidate)
     return cand_abs == base_abs or cand_abs.startswith(base_abs + os.sep)
 
+def _find_default_branch(node_dir: str) -> str | None:
+    rc, out, _ = run_git(node_dir, "symbolic-ref", "refs/remotes/origin/HEAD")
+    if rc == 0 and out:
+        return out.strip().split("/")[-1]
+
+    rc, out, _ = run_git(node_dir, "branch", "-r")
+    if rc == 0:
+        refs = {line.strip() for line in out.splitlines() if line.strip()}
+        for candidate in ("main", "master", "develop"):
+            if f"origin/{candidate}" in refs:
+                return candidate
+
+    return None
+
 
 def pip_install(cwd: str, requirements_file: str, progress: ProgressCb) -> dict:
     cmd = [sys.executable, "-m", "pip", "install", "-r", requirements_file]
@@ -162,7 +176,33 @@ def update_node(
         if rc != 0:
             raise RuntimeError(f"git checkout {version} failed: {err or out}")
     else:
-        progress("git pull --ff-only")
+        rc, out, _ = run_git(node_dir, "symbolic-ref", "-q", "--short", "HEAD")
+        current_branch = out.strip() if rc == 0 else None
+
+        if not current_branch:
+            progress("Detached HEAD detected — switching to default branch")
+            default_branch = _find_default_branch(node_dir)
+            if not default_branch:
+                raise RuntimeError(
+                    "Detached HEAD: couldn't define default branch. "
+                    "Specify the branch explicitly via Switch Version."
+                )
+
+            progress(f"git checkout {default_branch}")
+            rc, out, err = run_git(node_dir, "checkout", default_branch)
+            if rc != 0:
+                progress(f"git checkout -B {default_branch} origin/{default_branch}")
+                rc, out, err = run_git(
+                    node_dir, "checkout", "-B", default_branch,
+                    f"origin/{default_branch}",
+                )
+                if rc != 0:
+                    raise RuntimeError(
+                        f"git checkout {default_branch} failed: {err or out}"
+                    )
+            current_branch = default_branch
+
+        progress(f"git pull --ff-only (branch: {current_branch})")
         rc, out, err = run_git(node_dir, "pull", "--ff-only")
         if rc != 0:
             raise RuntimeError(f"git pull failed: {err or out}")
