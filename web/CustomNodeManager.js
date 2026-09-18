@@ -285,6 +285,31 @@ function _detectLocale() {
     return "en";
 }
 
+(function _installGlobalEscape() {
+    if (window.__cnmGlobalEscapeInstalled) return;
+    window.__cnmGlobalEscapeInstalled = true;
+
+    document.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        const popups = document.querySelectorAll(".cnm-pop-overlay");
+        if (!popups.length) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        const top = popups[popups.length - 1];
+        const closeFn = top.__cnmClose;
+        if (typeof closeFn === "function") {
+            try { closeFn(); } catch (err) {
+                console.error("🦊 popup close error:", err);
+                try { top.remove(); } catch (e) {}
+            }
+        } else {
+            try { top.remove(); } catch (e) {}
+        }
+    }, true);
+})();
+
 function _t(key) {
     const entry = I18N[key];
     if (!entry) return key;
@@ -1340,6 +1365,7 @@ function cnmStashPicker({ folder, stashes }) {
 
         const { overlay, body, footer } = _buildDialogShell({
             title: `${_t("stash_picker_title")} — ${folder}`,
+            onClose: () => close(),
         });
 
         const hint = document.createElement("div");
@@ -1364,6 +1390,7 @@ function cnmStashPicker({ folder, stashes }) {
         const cancelBtn = document.createElement("button");
         cancelBtn.className = "cnm-btn";
         cancelBtn.textContent = "Close";
+        cancelBtn.style.display = "none";
         footer.appendChild(cancelBtn);
 
         const close = () => {
@@ -1776,7 +1803,10 @@ function cnmPrompt(opts) {
     return new Promise((resolve) => {
         const { title, message, fields = [], okText = "OK", cancelText = "Cancel", danger = false } = opts || {};
 
-        const { overlay, body, footer } = _buildDialogShell({ title, danger });
+        const { overlay, body, footer } = _buildDialogShell({
+            title, danger,
+            onClose: () => close(null),
+        });
 
         if (message) {
             const msg = document.createElement("div");
@@ -1876,7 +1906,10 @@ function cnmConfirm(opts) {
     return new Promise((resolve) => {
         const { title, message, okText = "OK", cancelText = "Cancel", danger = false } = opts || {};
 
-        const { overlay, body, footer } = _buildDialogShell({ title, danger });
+        const { overlay, body, footer } = _buildDialogShell({
+            title, danger,
+            onClose: () => close(false),
+        });
 
         const msg = document.createElement("div");
         msg.className = "cnm-pop-message";
@@ -1923,7 +1956,10 @@ function cnmAlert(opts) {
     return new Promise((resolve) => {
         const { title, message, okText = "OK", danger = false } = opts || {};
 
-        const { overlay, body, footer } = _buildDialogShell({ title, danger });
+        const { overlay, body, footer } = _buildDialogShell({
+            title, danger,
+            onClose: () => close(),
+        });
 
         const msg = document.createElement("div");
         msg.className = "cnm-pop-message";
@@ -1958,7 +1994,10 @@ function cnmAlert(opts) {
 
 function cnmVersionPicker({ title, branch, currentTag, tags, source }) {
     return new Promise((resolve) => {
-        const { overlay, body, footer } = _buildDialogShell({ title });
+        const { overlay, body, footer } = _buildDialogShell({
+            title,
+            onClose: () => close(null),
+        });
 
         const hint = document.createElement("div");
         hint.className = "cnm-pop-message";
@@ -2068,7 +2107,7 @@ function _makeVersionRow({ star, ref, refIsCode, date, current, disabled, toolti
     return row;
 }
 
-function _buildDialogShell({ title, danger }) {
+function _buildDialogShell({ title, danger, onClose }) {
     const overlay = document.createElement("div");
     overlay.className = "cnm-pop-overlay";
 
@@ -2084,6 +2123,14 @@ function _buildDialogShell({ title, danger }) {
     titleEl.textContent = title || "";
     header.appendChild(titleEl);
 
+    const headerClose = document.createElement("button");
+    headerClose.type = "button";
+    headerClose.className = "cnm-pop-header-close";
+    headerClose.textContent = "✕";
+    headerClose.title = "Close";
+    headerClose.setAttribute("aria-label", "Close");
+    header.appendChild(headerClose);
+
     const body = document.createElement("div");
     body.className = "cnm-pop-body";
 
@@ -2096,7 +2143,26 @@ function _buildDialogShell({ title, danger }) {
     overlay.appendChild(pop);
     document.body.appendChild(overlay);
 
-    return { overlay, pop, body, footer };
+    const doClose = () => {
+        if (typeof onClose === "function") {
+            try { onClose(); } catch (err) {
+                console.error("🦊 popup onClose error:", err);
+                try { overlay.remove(); } catch (e) {}
+            }
+        } else {
+            try { overlay.remove(); } catch (e) {}
+        }
+    };
+
+    headerClose.onclick = doClose;
+    overlay.__cnmClose = doClose;
+
+    overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) doClose();
+    });
+    pop.addEventListener("click", (e) => e.stopPropagation());
+
+    return { overlay, pop, body, footer, headerClose };
 }
 
 const STATUS_TITLE = {
@@ -2360,8 +2426,39 @@ function injectStyles() {
         }
         .cnm-pop-danger { border-color: #7f1d1d; }
         .cnm-pop-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
             padding: 12px 16px;
             border-bottom: 1px solid var(--border-color);
+        }
+        .cnm-pop-header-close {
+            flex: 0 0 auto;
+            width: 26px;
+            height: 26px;
+            padding: 0;
+            margin: 0;
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--descrip-text);
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 14px;
+            line-height: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+        }
+        .cnm-pop-header-close:hover {
+            background: var(--comfy-menu-secondary-bg);
+            color: var(--fg-color);
+            border-color: var(--border-color);
+        }
+        .cnm-pop-header-close:active {
+            background: rgba(220,38,38,0.15);
+            color: #ef4444;
         }
         .cnm-pop-title {
             font-size: 15px; font-weight: 600;
@@ -2675,6 +2772,52 @@ function injectStyles() {
         .cnm-select-counter {
             font-size: 12px;
             color: var(--descrip-text);
+        }
+        /* ---------- Popup header: заголовок и ✕ в одну строку ---------- */
+        .cnm-pop .cnm-pop-header {
+            display: flex !important;
+            flex-direction: row !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            gap: 10px !important;
+            padding: 12px 16px !important;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .cnm-pop .cnm-pop-header .cnm-pop-title {
+            flex: 1 1 auto !important;
+            min-width: 0 !important;
+            margin: 0 !important;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--fg-color);
+            word-break: break-word;
+        }
+        .cnm-pop .cnm-pop-header .cnm-pop-header-close {
+            flex: 0 0 auto !important;
+            width: 26px !important;
+            height: 26px !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--descrip-text);
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 13px;
+            line-height: 1;
+            display: inline-flex !important;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.15s, color 0.15s;
+        }
+        .cnm-pop .cnm-pop-header .cnm-pop-header-close:hover {
+            background: var(--comfy-menu-secondary-bg);
+            color: var(--fg-color);
+        }
+        .cnm-pop .cnm-pop-header .cnm-pop-header-close:active {
+            background: rgba(220,38,38,0.15);
+            color: #ef4444;
+            border-color: #ef4444;
         }
         .cnm-detected-url {
             font-size: 11px;
