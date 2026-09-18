@@ -208,7 +208,7 @@ def _read_node_metadata(node_dir: str, tag: str = None) -> dict:
         try:
             tdata = None
             try:
-                import tomllib as _toml  # Py3.11+
+                import tomllib as _toml
                 with open(pyproj, "rb") as f:
                     tdata = _toml.load(f)
             except ImportError:

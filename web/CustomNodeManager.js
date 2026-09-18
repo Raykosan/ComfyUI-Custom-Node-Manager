@@ -523,7 +523,6 @@ function openManagerModal() {
     checkBtn.title = _t("check_updates_btn_tip");
     checkBtn.onclick = () => triggerCheckUpdates();
 
-    // --- search input ---
     const searchWrap = document.createElement("div");
     searchWrap.className = "cnm-search-wrap";
 
