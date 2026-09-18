@@ -163,7 +163,7 @@ Or set the `GITHUB_TOKEN` environment variable — it takes priority.
 ### "git was not found in the PATH"
 Install git: [git-scm.com/downloads](https://git-scm.com/downloads). On Windows, make sure "Add to PATH" is checked during installation.
 
-### "GitHub API rate limit достигнут"
+### "GitHub API rate limit has been reached"
 You've hit the 60 req/hour limit. Options:
 1. Wait until the reset (visible in the error tooltip).
 2. Set a `GITHUB_TOKEN` (see above).
