@@ -1,6 +1,6 @@
 import { app } from "../../../scripts/app.js";
 
-console.log("🦊 CNM JS v20 (attach remote) loaded at", new Date().toLocaleTimeString());
+console.log("🦊 CNM JS v22 (attach remote) loaded at", new Date().toLocaleTimeString());
 
 const STORAGE_KEY = "CustomNodeManager.ShowTopbarIcon";
 
@@ -505,7 +505,7 @@ function openManagerModal() {
 
     const header = document.createElement("div");
     header.className = "cnm-header";
-    header.innerHTML = `<div class="cnm-title">🦊 Custom Node Manager <span style="font-size:11px;color:var(--descrip-text);font-weight:400;">(js v20)</span></div>`;
+    header.innerHTML = `<div class="cnm-title">🦊 Custom Node Manager <span style="font-size:11px;color:var(--descrip-text);font-weight:400;">(js v22)</span></div>`;
 
     const closeBtn = document.createElement("button");
     closeBtn.className = "cnm-btn cnm-btn-small";
@@ -641,9 +641,14 @@ async function loadNodes(refreshBtn, { preferCache = false } = {}) {
             const res = await fetch("/custom_node_manager/cache", { cache: "no-store" });
             const cached = await res.json();
             const arr = Object.values(cached.nodes || {});
-            if (arr.length > 0) {
+
+            if (arr.length >= 3) {
                 nodes = arr;
                 _listSource = `cached · ${cached.updated || ""}`;
+            } else if (arr.length > 0) {
+                console.warn(
+                    `🦊 Cache has only ${arr.length} node(s), forcing full scan`
+                );
             }
         } catch (e) { /* fallthrough */ }
     }
@@ -779,7 +784,8 @@ function resetToAllNodes() {
     if (si) si.value = "";
     if (sc) sc.style.display = "none";
 
-    applyFilterAndRender();
+    const refreshBtn = document.querySelector(".cnm-toolbar .cnm-btn:not(.cnm-btn-primary)");
+    loadNodes(refreshBtn, { preferCache: true });
 }
 
 function updateAllNodesBtn() {

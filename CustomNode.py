@@ -444,27 +444,36 @@ def _post_update_refresh(folders: list) -> None:
     cache = _load_cache()
     nodes = cache.get("nodes") or {}
     updates = cache.get("updates") or {}
+
+    nodes_empty = (len(nodes) == 0)
+    if nodes_empty:
+        logger.info(
+            "Post-refresh: node cache is empty, skipping node metadata update. "
+            "Cache will be populated on next /scan."
+        )
+
     changed = False
 
     for folder in folders:
         if not folder:
             continue
-        node_dir = _find_node_dir(folder)
-        if not node_dir:
-            continue
 
-        info = _scan_single_node(node_dir)
-        if info:
-            info["base"] = os.path.dirname(node_dir)
-            nodes[folder] = info
-            changed = True
+        if not nodes_empty:
+            node_dir = _find_node_dir(folder)
+            if node_dir:
+                info = _scan_single_node(node_dir)
+                if info:
+                    info["base"] = os.path.dirname(node_dir)
+                    nodes[folder] = info
+                    changed = True
 
         if folder in updates:
             del updates[folder]
             changed = True
 
     if changed:
-        cache["nodes"] = nodes
+        if not nodes_empty:
+            cache["nodes"] = nodes
         cache["updates"] = updates
         _save_cache(cache)
         logger.info(f"Cache refreshed for: {', '.join(folders)}")
