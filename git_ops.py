@@ -35,7 +35,12 @@ def git_available() -> bool:
     return shutil.which("git") is not None
 
 
-def run_git(cwd: Optional[str], *args: str, timeout: float = DEFAULT_GIT_TIMEOUT):
+def run_git(
+    cwd: Optional[str],
+    *args: str,
+    timeout: float = DEFAULT_GIT_TIMEOUT,
+    env: Optional[dict] = None,
+):
     cmd = ["git"]
     if cwd:
         cmd += ["-C", cwd]
@@ -44,6 +49,7 @@ def run_git(cwd: Optional[str], *args: str, timeout: float = DEFAULT_GIT_TIMEOUT
         p = subprocess.run(
             cmd, capture_output=True, text=True,
             timeout=timeout, check=False,
+            env=env,
         )
         return p.returncode, (p.stdout or "").strip(), (p.stderr or "").strip()
     except subprocess.TimeoutExpired:
@@ -447,3 +453,9 @@ def attach_git_remote(
         "git_url": git_url,
         "changed_files": diff_count,
     }
+
+def non_interactive_env() -> dict:
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "Never"
+    return env

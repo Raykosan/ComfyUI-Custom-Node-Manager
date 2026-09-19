@@ -40,6 +40,14 @@ def _parse_ls_remote(output: str) -> dict:
 
 
 def check_single_node(node: dict) -> dict:
+    """
+    Определяет, ушла ли ветка origin вперёд относительно локального HEAD.
+    Вариант A: сравнение SHA локального HEAD с remote-tip ветки.
+
+    Использует non-interactive env для git — никаких GCM-диалогов.
+    Приватные ноды без credentials в системном keychain просто вернут
+    ошибку в поле `error` и не покажутся в UI как has_update.
+    """
     folder = node.get("folder") or "?"
     node_dir = node.get("path")
     git_url = node.get("git_url")
@@ -63,6 +71,7 @@ def check_single_node(node: dict) -> dict:
     rc, out, err = git_ops.run_git(
         node_dir, "ls-remote", "origin",
         timeout=LS_REMOTE_TIMEOUT,
+        env=git_ops.non_interactive_env(),
     )
     if rc != 0:
         result["error"] = (err or "ls-remote failed").strip()[:200]
