@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `All Nodes` button now reads from cache instead of forcing a full rescan (instant for 50+ nodes)
 - `loadNodes` ignores suspiciously small caches (< 3 nodes) and forces a full scan instead
 
+## [0.2.1] - 2026-09-19
+
+### Fixed
+- Background update check no longer spawns Git Credential Manager dialogs (private repos without cached credentials are silently skipped)
+
+### Changed
+- Background `git ls-remote` now runs with `GIT_TERMINAL_PROMPT=0` and `GCM_INTERACTIVE=Never`
+
 ## [0.2.0] - 2026-09-18
 
 ### Added
