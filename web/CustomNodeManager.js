@@ -1,6 +1,6 @@
 import { app } from "../../../scripts/app.js";
 
-console.log("🦊 CNM JS v19 (attach remote) loaded at", new Date().toLocaleTimeString());
+console.log("🦊 CNM JS v20 (attach remote) loaded at", new Date().toLocaleTimeString());
 
 const STORAGE_KEY = "CustomNodeManager.ShowTopbarIcon";
 
@@ -266,6 +266,16 @@ const I18N = {
         zh: "更新",
         ru: "Обновить",
     },
+    all_nodes_btn: {
+        en: "All Nodes",
+        zh: "所有节点",
+        ru: "Все ноды",
+    },
+    all_nodes_tip: {
+        en: "Show all nodes (reset filters)",
+        zh: "显示所有节点（重置筛选）",
+        ru: "Показать все ноды (сбросить фильтры)",
+    },
 };
 
 function _detectLocale() {
@@ -495,7 +505,7 @@ function openManagerModal() {
 
     const header = document.createElement("div");
     header.className = "cnm-header";
-    header.innerHTML = `<div class="cnm-title">🦊 Custom Node Manager <span style="font-size:11px;color:var(--descrip-text);font-weight:400;">(js v19)</span></div>`;
+    header.innerHTML = `<div class="cnm-title">🦊 Custom Node Manager <span style="font-size:11px;color:var(--descrip-text);font-weight:400;">(js v20)</span></div>`;
 
     const closeBtn = document.createElement("button");
     closeBtn.className = "cnm-btn cnm-btn-small";
@@ -506,8 +516,15 @@ function openManagerModal() {
     const toolbar = document.createElement("div");
     toolbar.className = "cnm-toolbar";
 
+    const allNodesBtn = document.createElement("button");
+    allNodesBtn.className = "cnm-btn cnm-btn-primary";
+    allNodesBtn.id = "cnm-all-nodes-btn";
+    allNodesBtn.textContent = "📂 " + _t("all_nodes_btn");
+    allNodesBtn.title = _t("all_nodes_tip");
+    allNodesBtn.onclick = resetToAllNodes;
+
     const installBtn = document.createElement("button");
-    installBtn.className = "cnm-btn cnm-btn-primary";
+    installBtn.className = "cnm-btn";
     installBtn.textContent = "➕ Install";
     installBtn.onclick = installFromUrl;
 
@@ -578,6 +595,7 @@ function openManagerModal() {
     const statusEl = document.createElement("span");
     statusEl.className = "cnm-status";
 
+    toolbar.appendChild(allNodesBtn);
     toolbar.appendChild(installBtn);
     toolbar.appendChild(refreshBtn);
     toolbar.appendChild(checkBtn);
@@ -751,6 +769,33 @@ function renderUpdatesChip() {
     }
 }
 
+function resetToAllNodes() {
+    _filterHasUpdate = false;
+    _selected.clear();
+    _query = "";
+
+    const si = document.querySelector(".cnm-search");
+    const sc = document.querySelector(".cnm-search-clear");
+    if (si) si.value = "";
+    if (sc) sc.style.display = "none";
+
+    applyFilterAndRender();
+}
+
+function updateAllNodesBtn() {
+    const btn = document.getElementById("cnm-all-nodes-btn");
+    if (!btn) return;
+
+    // Кнопка "primary", когда есть активный фильтр/выделение — визуальный
+    // намёк, что сейчас показывается не всё.
+    const hasFilter = _filterHasUpdate || (_query && _query.trim().length > 0);
+    if (hasFilter) {
+        btn.classList.add("cnm-btn-primary");
+    } else {
+        btn.classList.remove("cnm-btn-primary");
+    }
+}
+
 function renderSelectBar() {
     const bar = document.getElementById("cnm-select-bar");
     if (!bar) return;
@@ -854,6 +899,7 @@ function applyFilterAndRender() {
     renderNodes(list, filtered);
     renderUpdatesChip();
     renderSelectBar();
+    updateAllNodesBtn();
 
     const total = _allNodes.length;
     const shown = filtered.length;
