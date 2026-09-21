@@ -1,6 +1,6 @@
 import { app } from "../../../scripts/app.js";
 
-console.log("🦊 CNM JS v22 (attach remote) loaded at", new Date().toLocaleTimeString());
+console.log("🦊 CNM JS v23 (attach remote) loaded at", new Date().toLocaleTimeString());
 
 const STORAGE_KEY = "CustomNodeManager.ShowTopbarIcon";
 
@@ -505,7 +505,7 @@ function openManagerModal() {
 
     const header = document.createElement("div");
     header.className = "cnm-header";
-    header.innerHTML = `<div class="cnm-title">🦊 Custom Node Manager <span style="font-size:11px;color:var(--descrip-text);font-weight:400;">(js v22)</span></div>`;
+    header.innerHTML = `<div class="cnm-title">🦊 Custom Node Manager <span style="font-size:11px;color:var(--descrip-text);font-weight:400;">(js v23)</span></div>`;
 
     const closeBtn = document.createElement("button");
     closeBtn.className = "cnm-btn cnm-btn-small";
@@ -792,8 +792,6 @@ function updateAllNodesBtn() {
     const btn = document.getElementById("cnm-all-nodes-btn");
     if (!btn) return;
 
-    // Кнопка "primary", когда есть активный фильтр/выделение — визуальный
-    // намёк, что сейчас показывается не всё.
     const hasFilter = _filterHasUpdate || (_query && _query.trim().length > 0);
     if (hasFilter) {
         btn.classList.add("cnm-btn-primary");
@@ -1421,18 +1419,8 @@ function cnmStashPicker({ folder, stashes }) {
 
         const hint = document.createElement("div");
         hint.className = "cnm-pop-message";
-        hint.textContent = _t("version_picker_hint");
+        hint.textContent = _t("stash_picker_hint");
         body.appendChild(hint);
-
-        const srcLabel = document.createElement("div");
-        srcLabel.className = "cnm-ver-source";
-        if (source === "github") {
-            srcLabel.textContent = "· " + _t("version_source_github");
-            srcLabel.classList.add("cnm-ver-source-github");
-        } else {
-            srcLabel.textContent = "· " + _t("version_source_local");
-        }
-        body.appendChild(srcLabel);
 
         const listWrap = document.createElement("div");
         listWrap.className = "cnm-ver-list";
@@ -1689,12 +1677,10 @@ function cnmStashPicker({ folder, stashes }) {
             return row;
         };
 
-        cancelBtn.onclick = close;
         overlay.onclick = (e) => { if (e.target === overlay) close(); };
         document.addEventListener("keydown", onKey, true);
 
         renderList();
-        requestAnimationFrame(() => cancelBtn.focus());
     });
 }
 
