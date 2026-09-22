@@ -1,6 +1,9 @@
 # Byte-compiled / optimized / DLL files
 node.zip
 __pycache__/
+*.pyc
+cache.json
+github_cache.json
 *.py[cod]
 *$py.class
 

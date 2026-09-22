@@ -1,6 +1,6 @@
 [project]
 name = "ComfyUI-Custom-Node-Manager"
-version = "0.2.3"
+version = "0.3.0"
 description = "Alternative manager for custom_nodes that bypasses ComfyUI Manager restrictions"
 readme = "README.md"
 license = { file = "LICENSE" }

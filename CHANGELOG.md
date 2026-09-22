@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-09-22
+
+### Security
+- **All HTTP routes are now local-only** — requests from non-loopback addresses are rejected with 403
+- **All state-changing POST routes require a session token** (`X-CNM-Token` header), generated at startup and retrievable only from `127.0.0.1`
+- **`install` and `attach_remote`** now validate `git_url` against an allow-list of hosts (github.com, gitlab.com, bitbucket.org, codeberg.org, gitea.com; overridable via `CNM_ALLOWED_GIT_HOSTS` env var)
+- **`remove`** now uses `os.path.commonpath` to verify the target is inside `custom_nodes`, rejects absolute paths, path separators, and `..` segments
+- Added `security.py` module with `local_only` and `local_and_token` decorators
+
+### Added
+- `GET /custom_node_manager/token` — returns the session token (local-only)
+
 ## [0.2.3] - 2026-09-21
 
 ### Fixed

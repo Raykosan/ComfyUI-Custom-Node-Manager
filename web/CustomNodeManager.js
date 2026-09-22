@@ -1,8 +1,11 @@
 import { app } from "../../../scripts/app.js";
 
-console.log("🦊 CNM JS v23 (attach remote) loaded at", new Date().toLocaleTimeString());
+console.log("🦊 CNM JS v25 (security) loaded at", new Date().toLocaleTimeString());
 
 const STORAGE_KEY = "CustomNodeManager.ShowTopbarIcon";
+
+let _cnmToken = null;
+let _cnmTokenPromise = null;
 
 let _allNodes = [];
 let _query = "";
@@ -216,16 +219,6 @@ const I18N = {
         zh: "关联失败",
         ru: "Не удалось привязать",
     },
-    version_source_github: {
-        en: "listed from GitHub API",
-        zh: "来自 GitHub API",
-        ru: "список получен через GitHub API",
-    },
-    version_source_local: {
-        en: "listed from local git",
-        zh: "来自本地 git",
-        ru: "список получен из локального git",
-    },
     select_all: {
         en: "Select all",
         zh: "全选",
@@ -266,6 +259,16 @@ const I18N = {
         zh: "更新",
         ru: "Обновить",
     },
+    version_source_github: {
+        en: "listed from GitHub API",
+        zh: "来自 GitHub API",
+        ru: "список получен через GitHub API",
+    },
+    version_source_local: {
+        en: "listed from local git",
+        zh: "来自本地 git",
+        ru: "список получен из локального git",
+    },
     all_nodes_btn: {
         en: "All Nodes",
         zh: "所有节点",
@@ -287,38 +290,13 @@ function _detectLocale() {
             if (low.startsWith("ru")) return "ru";
             return "en";
         }
-    } catch (e) { /* fallback */ }
+    } catch (e) { }
 
     const nav = (navigator.language || "en").toLowerCase();
     if (nav.startsWith("zh")) return "zh";
     if (nav.startsWith("ru")) return "ru";
     return "en";
 }
-
-(function _installGlobalEscape() {
-    if (window.__cnmGlobalEscapeInstalled) return;
-    window.__cnmGlobalEscapeInstalled = true;
-
-    document.addEventListener("keydown", (e) => {
-        if (e.key !== "Escape") return;
-        const popups = document.querySelectorAll(".cnm-pop-overlay");
-        if (!popups.length) return;
-
-        e.preventDefault();
-        e.stopPropagation();
-
-        const top = popups[popups.length - 1];
-        const closeFn = top.__cnmClose;
-        if (typeof closeFn === "function") {
-            try { closeFn(); } catch (err) {
-                console.error("🦊 popup close error:", err);
-                try { top.remove(); } catch (e) {}
-            }
-        } else {
-            try { top.remove(); } catch (e) {}
-        }
-    }, true);
-})();
 
 function _t(key) {
     const entry = I18N[key];
@@ -335,6 +313,34 @@ function _tf(key, vars) {
     return s;
 }
 
+async function _ensureToken() {
+    if (_cnmToken) return _cnmToken;
+    if (_cnmTokenPromise) return _cnmTokenPromise;
+
+    _cnmTokenPromise = (async () => {
+        try {
+            const res = await fetch("/custom_node_manager/token", { cache: "no-store" });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            _cnmToken = data.token;
+            return _cnmToken;
+        } catch (e) {
+            console.error("🦊 Failed to obtain session token:", e);
+            _cnmTokenPromise = null;
+            throw e;
+        }
+    })();
+
+    return _cnmTokenPromise;
+}
+
+async function _authedFetch(url, opts = {}) {
+    await _ensureToken();
+    const headers = { ...(opts.headers || {}) };
+    if (_cnmToken) headers["X-CNM-Token"] = _cnmToken;
+    return fetch(url, { ...opts, headers });
+}
+
 app.registerExtension({
     name: "CustomNodeManager",
 
@@ -347,7 +353,7 @@ app.registerExtension({
 
         app.ui.settings.addSetting({
             id: "CustomNodeManager.GitHubToken",
-            name: "GitHub Token (optional, not used yet)",
+            name: "GitHub Token (optional)",
             type: "text",
             defaultValue: "",
         });
@@ -355,6 +361,10 @@ app.registerExtension({
         if (localStorage.getItem(STORAGE_KEY) === "true") {
             waitForActionBar((bar) => injectTopbarButton(bar));
         }
+
+        _ensureToken().catch((e) => {
+            console.warn("🦊 Token prefetch failed (will retry on demand):", e);
+        });
     },
 });
 
@@ -404,6 +414,43 @@ function buildSettingsEntry() {
     return container;
 }
 
+function closeComfySettingsDialog() {
+    try {
+        const cmd = app?.extensionManager?.command;
+        if (cmd?.executeCommand) {
+            try {
+                cmd.executeCommand("Comfy.CloseSettingsDialog");
+                return;
+            } catch (e) { }
+        }
+    } catch (e) { }
+
+    try {
+        const dlg = app?.ui?.settings?.dialog;
+        if (dlg && typeof dlg.close === "function") {
+            dlg.close();
+            return;
+        }
+    } catch (e) { }
+
+    const selectors = [
+        ".p-dialog.p-component .p-dialog-header-close",
+        ".p-dialog .p-dialog-header-close",
+        "[role='dialog'] .p-dialog-header-close",
+        "[role='dialog'] [aria-label='Close']",
+        "[role='dialog'] [aria-label='close']",
+    ];
+    for (const sel of selectors) {
+        const buttons = document.querySelectorAll(sel);
+        for (const btn of buttons) {
+            if (btn.offsetParent !== null) {
+                btn.click();
+                return;
+            }
+        }
+    }
+}
+
 function waitForActionBar(callback) {
     const existing = document.querySelector(".actionbar-container");
     if (existing) return callback(existing);
@@ -449,49 +496,14 @@ function injectTopbarButton(actionBar) {
     }
 }
 
-function closeComfySettingsDialog() {
-    try {
-        const cmd = app?.extensionManager?.command;
-        if (cmd?.executeCommand) {
-            try {
-                cmd.executeCommand("Comfy.CloseSettingsDialog");
-                return;
-            } catch (e) { /* команда может отсутствовать */ }
-        }
-    } catch (e) {}
-
-    try {
-        const dlg = app?.ui?.settings?.dialog;
-        if (dlg && typeof dlg.close === "function") {
-            dlg.close();
-            return;
-        }
-    } catch (e) {}
-
-    const selectors = [
-        ".p-dialog.p-component .p-dialog-header-close",
-        ".p-dialog .p-dialog-header-close",
-        "[role='dialog'] .p-dialog-header-close",
-        "[role='dialog'] [aria-label='Close']",
-        "[role='dialog'] [aria-label='close']",
-    ];
-    for (const sel of selectors) {
-        const buttons = document.querySelectorAll(sel);
-        for (const btn of buttons) {
-            if (btn.offsetParent !== null) {
-                btn.click();
-                return;
-            }
-        }
-    }
-}
-
 function openManagerModal() {
     if (document.getElementById("cnm-overlay")) return;
 
     _allNodes = [];
     _query = "";
     _listSource = "";
+    _selected.clear();
+    _filterHasUpdate = false;
 
     const overlay = document.createElement("div");
     overlay.id = "cnm-overlay";
@@ -505,7 +517,7 @@ function openManagerModal() {
 
     const header = document.createElement("div");
     header.className = "cnm-header";
-    header.innerHTML = `<div class="cnm-title">🦊 Custom Node Manager <span style="font-size:11px;color:var(--descrip-text);font-weight:400;">(js v23)</span></div>`;
+    header.innerHTML = `<div class="cnm-title">🦊 Custom Node Manager <span style="font-size:11px;color:var(--descrip-text);font-weight:400;">(js v25)</span></div>`;
 
     const closeBtn = document.createElement("button");
     closeBtn.className = "cnm-btn cnm-btn-small";
@@ -650,7 +662,7 @@ async function loadNodes(refreshBtn, { preferCache = false } = {}) {
                     `🦊 Cache has only ${arr.length} node(s), forcing full scan`
                 );
             }
-        } catch (e) { /* fallthrough */ }
+        } catch (e) { }
     }
 
     if (!nodes) {
@@ -686,14 +698,14 @@ async function loadUpdates() {
         _updates = data.updates || {};
         _updatesCheckedAt = data.checked_at;
         _updatesChecking = !!data.checking;
-    } catch (e) { /* сеть отвалилась — оставляем как есть */ }
+    } catch (e) { }
 }
 
 async function triggerCheckUpdates() {
     const btn = document.getElementById("cnm-check-btn");
     if (btn) btn.disabled = true;
     try {
-        const res = await fetch("/custom_node_manager/check_updates", {
+        const res = await _authedFetch("/custom_node_manager/check_updates", {
             method: "POST",
             cache: "no-store",
         });
@@ -774,32 +786,6 @@ function renderUpdatesChip() {
     }
 }
 
-function resetToAllNodes() {
-    _filterHasUpdate = false;
-    _selected.clear();
-    _query = "";
-
-    const si = document.querySelector(".cnm-search");
-    const sc = document.querySelector(".cnm-search-clear");
-    if (si) si.value = "";
-    if (sc) sc.style.display = "none";
-
-    const refreshBtn = document.querySelector(".cnm-toolbar .cnm-btn:not(.cnm-btn-primary)");
-    loadNodes(refreshBtn, { preferCache: true });
-}
-
-function updateAllNodesBtn() {
-    const btn = document.getElementById("cnm-all-nodes-btn");
-    if (!btn) return;
-
-    const hasFilter = _filterHasUpdate || (_query && _query.trim().length > 0);
-    if (hasFilter) {
-        btn.classList.add("cnm-btn-primary");
-    } else {
-        btn.classList.remove("cnm-btn-primary");
-    }
-}
-
 function renderSelectBar() {
     const bar = document.getElementById("cnm-select-bar");
     if (!bar) return;
@@ -859,6 +845,32 @@ function renderSelectBar() {
         applyFilterAndRender();
     };
     bar.appendChild(clearBtn);
+}
+
+function resetToAllNodes() {
+    _filterHasUpdate = false;
+    _selected.clear();
+    _query = "";
+
+    const si = document.querySelector(".cnm-search");
+    const sc = document.querySelector(".cnm-search-clear");
+    if (si) si.value = "";
+    if (sc) sc.style.display = "none";
+
+    const refreshBtn = document.querySelector(".cnm-toolbar .cnm-btn:not(.cnm-btn-primary)");
+    loadNodes(refreshBtn, { preferCache: true });
+}
+
+function updateAllNodesBtn() {
+    const btn = document.getElementById("cnm-all-nodes-btn");
+    if (!btn) return;
+
+    const hasFilter = _filterHasUpdate || (_query && _query.trim().length > 0);
+    if (hasFilter) {
+        btn.classList.add("cnm-btn-primary");
+    } else {
+        btn.classList.remove("cnm-btn-primary");
+    }
 }
 
 function filterNodes(nodes, query) {
@@ -1215,7 +1227,7 @@ async function askAttachRemote(node) {
 
     const git_url = res.git_url.trim();
     try {
-        const resp = await fetch("/custom_node_manager/attach_remote", {
+        const resp = await _authedFetch("/custom_node_manager/attach_remote", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ folder: node.folder, git_url }),
@@ -1277,7 +1289,7 @@ async function runBatchUpdate() {
     if (!ok) return;
 
     try {
-        const res = await fetch("/custom_node_manager/batch_update", {
+        const res = await _authedFetch("/custom_node_manager/batch_update", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ folders }),
@@ -1396,14 +1408,17 @@ async function openStashPicker(node) {
         return;
     }
 
-    const didChange = await cnmStashPicker({
+    const result = await cnmStashPicker({
         folder: node.folder,
         stashes,
     });
 
-    if (didChange) {
-        const refreshBtn = document.querySelector(".cnm-toolbar .cnm-btn:not(.cnm-btn-primary)");
-        if (refreshBtn) loadNodes(refreshBtn, { preferCache: false });
+    if (result && result.changed) {
+        const live = _allNodes.find((n) => n.folder === node.folder);
+        if (live) {
+            live.stash_count = result.stashCount;
+        }
+        applyFilterAndRender();
     }
 }
 
@@ -1435,7 +1450,7 @@ function cnmStashPicker({ folder, stashes }) {
         const close = () => {
             document.removeEventListener("keydown", onKey, true);
             overlay.remove();
-            resolve(didChange);
+            resolve({ changed: didChange, stashCount: currentStashes.length });
         };
 
         const onKey = (e) => {
@@ -1607,7 +1622,7 @@ function cnmStashPicker({ folder, stashes }) {
                 dropBtn.disabled = true;
                 restoreBtn.textContent = "…";
                 try {
-                    const res = await fetch("/custom_node_manager/stash/pop", {
+                    const res = await _authedFetch("/custom_node_manager/stash/pop", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ folder, ref: st.ref }),
@@ -1645,7 +1660,7 @@ function cnmStashPicker({ folder, stashes }) {
                 dropBtn.disabled = true;
                 dropBtn.textContent = "…";
                 try {
-                    const res = await fetch("/custom_node_manager/stash/drop", {
+                    const res = await _authedFetch("/custom_node_manager/stash/drop", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ folder, ref: st.ref }),
@@ -1689,7 +1704,7 @@ async function runTask({ url, body, title, onSuccess }) {
     console.log("🦊 CNM runTask →", "POST", url, body);
 
     try {
-        const res = await fetch(url, {
+        const res = await _authedFetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
@@ -1726,6 +1741,7 @@ async function runTask({ url, body, title, onSuccess }) {
 
 function showTaskPanel(title, taskId, opts = {}) {
     const { onSuccess } = opts;
+
     let panel = document.getElementById("cnm-task-panel");
     if (!panel) {
         panel = document.createElement("div");
@@ -1795,8 +1811,8 @@ function showTaskPanel(title, taskId, opts = {}) {
                     restartBtn.textContent = "Restarting…";
                     _serverRestarting = true;
                     try {
-                        await fetch("/custom_node_manager/restart", { method: "POST" });
-                    } catch (e) { /* expected */ }
+                        await _authedFetch("/custom_node_manager/restart", { method: "POST" });
+                    } catch (e) { }
                     setTimeout(() => pollPing(restartBtn), 5000);
                 };
 
@@ -1812,7 +1828,7 @@ function showTaskPanel(title, taskId, opts = {}) {
                 progressEl.classList.remove("cnm-task-ok");
                 return;
             }
-        } catch (e) { /* продолжаем опрос */ }
+        } catch (e) { }
         setTimeout(poll, 1500);
     }
 
@@ -1831,7 +1847,7 @@ function pollPing(restartBtn) {
                 window.location.reload();
                 return;
             }
-        } catch (e) {}
+        } catch (e) { }
         if (attempts >= maxAttempts) {
             clearInterval(interval);
             _serverRestarting = false;
@@ -1932,7 +1948,6 @@ function cnmPrompt(opts) {
 
         cancelBtn.onclick = () => close(null);
         okBtn.onclick = trySubmit;
-        overlay.onclick = (e) => { if (e.target === overlay) close(null); };
         document.addEventListener("keydown", onKey, true);
 
         const first = fields.find((f) => f.autofocus) || fields[0];
@@ -1987,7 +2002,6 @@ function cnmConfirm(opts) {
 
         cancelBtn.onclick = () => close(false);
         okBtn.onclick = () => close(true);
-        overlay.onclick = (e) => { if (e.target === overlay) close(false); };
         document.addEventListener("keydown", onKey, true);
 
         requestAnimationFrame(() => okBtn.focus());
@@ -2027,7 +2041,6 @@ function cnmAlert(opts) {
         };
 
         okBtn.onclick = close;
-        overlay.onclick = (e) => { if (e.target === overlay) close(); };
         document.addEventListener("keydown", onKey, true);
 
         requestAnimationFrame(() => okBtn.focus());
@@ -2045,6 +2058,16 @@ function cnmVersionPicker({ title, branch, currentTag, tags, source }) {
         hint.className = "cnm-pop-message";
         hint.textContent = _t("version_picker_hint");
         body.appendChild(hint);
+
+        const srcLabel = document.createElement("div");
+        srcLabel.className = "cnm-ver-source";
+        if (source === "github") {
+            srcLabel.textContent = "· " + _t("version_source_github");
+            srcLabel.classList.add("cnm-ver-source-github");
+        } else {
+            srcLabel.textContent = "· " + _t("version_source_local");
+        }
+        body.appendChild(srcLabel);
 
         const listWrap = document.createElement("div");
         listWrap.className = "cnm-ver-list";
@@ -2099,7 +2122,6 @@ function cnmVersionPicker({ title, branch, currentTag, tags, source }) {
         };
 
         cancelBtn.onclick = () => close(null);
-        overlay.onclick = (e) => { if (e.target === overlay) close(null); };
         document.addEventListener("keydown", onKey, true);
 
         requestAnimationFrame(() => cancelBtn.focus());
@@ -2189,10 +2211,10 @@ function _buildDialogShell({ title, danger, onClose }) {
         if (typeof onClose === "function") {
             try { onClose(); } catch (err) {
                 console.error("🦊 popup onClose error:", err);
-                try { overlay.remove(); } catch (e) {}
+                try { overlay.remove(); } catch (e) { }
             }
         } else {
-            try { overlay.remove(); } catch (e) {}
+            try { overlay.remove(); } catch (e) { }
         }
     };
 
@@ -2206,6 +2228,31 @@ function _buildDialogShell({ title, danger, onClose }) {
 
     return { overlay, pop, body, footer, headerClose };
 }
+
+(function _installGlobalEscape() {
+    if (window.__cnmGlobalEscapeInstalled) return;
+    window.__cnmGlobalEscapeInstalled = true;
+
+    document.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        const popups = document.querySelectorAll(".cnm-pop-overlay");
+        if (!popups.length) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        const top = popups[popups.length - 1];
+        const closeFn = top.__cnmClose;
+        if (typeof closeFn === "function") {
+            try { closeFn(); } catch (err) {
+                console.error("🦊 popup close error:", err);
+                try { top.remove(); } catch (e) { }
+            }
+        } else {
+            try { top.remove(); } catch (e) { }
+        }
+    }, true);
+})();
 
 const STATUS_TITLE = {
     M: "Modified",
@@ -2276,21 +2323,37 @@ function injectStyles() {
             padding: 10px 18px;
             border-bottom: 1px solid var(--border-color);
         }
-        .cnm-search-wrap {
-            position: relative;
-            flex: 1;
+        .cnm-toolbar .cnm-search-wrap {
+            position: relative !important;
+            flex: 1 1 auto;
             display: flex;
             align-items: center;
             min-width: 120px;
         }
-        .cnm-search-clear {
-            position: absolute;
+        .cnm-toolbar .cnm-search-wrap .cnm-search {
+            width: 100%;
+            padding: 6px 30px 6px 12px;
+            font-size: 13px;
+            background: var(--comfy-input-bg);
+            color: var(--fg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .cnm-toolbar .cnm-search-wrap .cnm-search:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 2px rgba(59,130,246,0.25);
+        }
+        .cnm-toolbar .cnm-search-wrap .cnm-search-clear {
+            position: absolute !important;
             right: 6px;
             top: 50%;
             transform: translateY(-50%);
             width: 20px;
             height: 20px;
             padding: 0;
+            margin: 0;
             background: transparent;
             border: none;
             color: var(--descrip-text);
@@ -2302,29 +2365,11 @@ function injectStyles() {
             justify-content: center;
             border-radius: 3px;
             transition: background 0.15s, color 0.15s;
+            z-index: 2;
         }
-        .cnm-search-clear:hover {
+        .cnm-toolbar .cnm-search-wrap .cnm-search-clear:hover {
             background: var(--comfy-menu-secondary-bg);
             color: var(--fg-color);
-        }
-        .cnm-search {
-            padding-right: 30px;
-        }
-        .cnm-search {
-            width: 100%;
-            padding: 6px 12px;
-            padding-right: 30px;
-            font-size: 13px;
-            background: var(--comfy-input-bg);
-            color: var(--fg-color);
-            border: 1px solid var(--border-color);
-            border-radius: 4px;
-            box-sizing: border-box;
-        }
-        .cnm-search:focus {
-            outline: none;
-            border-color: #3b82f6;
-            box-shadow: 0 0 0 2px rgba(59,130,246,0.25);
         }
         .cnm-status { font-size: 12px; color: var(--descrip-text); white-space: nowrap; }
         .cnm-list {
@@ -2395,6 +2440,21 @@ function injectStyles() {
             border-color: #10b981;
             font-weight: 600;
         }
+        .cnm-badge-version {
+            background: rgba(59,130,246,0.18);
+            color: var(--fg-color);
+            border: 1px solid rgba(59,130,246,0.4);
+            font-weight: 600;
+        }
+        .cnm-badge-version-text {
+            font-family: monospace;
+        }
+        .cnm-badge-source {
+            font-size: 10px;
+            font-weight: 400;
+            color: var(--descrip-text);
+            opacity: 0.85;
+        }
 
         .cnm-row-meta { font-size: 12px; }
         .cnm-link { color: var(--primary-color, #4a9eff); text-decoration: none; }
@@ -2443,7 +2503,6 @@ function injectStyles() {
         .cnm-task-log:empty { display: none; }
         .cnm-task-actions { display: flex; gap: 6px; }
 
-        /* ---------- Custom dialogues ---------- */
         .cnm-pop-overlay {
             position: fixed; inset: 0;
             background: rgba(0,0,0,0.7);
@@ -2467,45 +2526,50 @@ function injectStyles() {
             to   { transform: scale(1);    opacity: 1; }
         }
         .cnm-pop-danger { border-color: #7f1d1d; }
-        .cnm-pop-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 8px;
-            padding: 12px 16px;
+        .cnm-pop .cnm-pop-header {
+            display: flex !important;
+            flex-direction: row !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            gap: 10px !important;
+            padding: 12px 16px !important;
             border-bottom: 1px solid var(--border-color);
         }
-        .cnm-pop-header-close {
-            flex: 0 0 auto;
-            width: 26px;
-            height: 26px;
-            padding: 0;
-            margin: 0;
+        .cnm-pop .cnm-pop-header .cnm-pop-title {
+            flex: 1 1 auto !important;
+            min-width: 0 !important;
+            margin: 0 !important;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--fg-color);
+            word-break: break-word;
+        }
+        .cnm-pop .cnm-pop-header .cnm-pop-header-close {
+            flex: 0 0 auto !important;
+            width: 26px !important;
+            height: 26px !important;
+            padding: 0 !important;
+            margin: 0 !important;
             background: transparent;
-            border: 1px solid transparent;
+            border: 1px solid var(--border-color);
             color: var(--descrip-text);
             cursor: pointer;
             border-radius: 4px;
-            font-size: 14px;
+            font-size: 13px;
             line-height: 1;
-            display: flex;
+            display: inline-flex !important;
             align-items: center;
             justify-content: center;
-            transition: background 0.15s, color 0.15s, border-color 0.15s;
+            transition: background 0.15s, color 0.15s;
         }
-        .cnm-pop-header-close:hover {
+        .cnm-pop .cnm-pop-header .cnm-pop-header-close:hover {
             background: var(--comfy-menu-secondary-bg);
             color: var(--fg-color);
-            border-color: var(--border-color);
         }
-        .cnm-pop-header-close:active {
+        .cnm-pop .cnm-pop-header .cnm-pop-header-close:active {
             background: rgba(220,38,38,0.15);
             color: #ef4444;
-        }
-        .cnm-pop-title {
-            font-size: 15px; font-weight: 600;
-            color: var(--fg-color);
-            word-break: break-word;
+            border-color: #ef4444;
         }
         .cnm-pop-body {
             padding: 14px 16px;
@@ -2548,7 +2612,6 @@ function injectStyles() {
             display: flex; justify-content: flex-end; gap: 8px;
         }
 
-        /* ---------- Version picker ---------- */
         .cnm-ver-list {
             display: flex; flex-direction: column;
             border: 1px solid var(--border-color);
@@ -2616,8 +2679,19 @@ function injectStyles() {
         .cnm-ver-row-disabled .cnm-ver-ref {
             color: var(--descrip-text);
         }
+        .cnm-ver-source {
+            font-size: 11px;
+            color: var(--descrip-text);
+            font-style: italic;
+            margin-top: -6px;
+            margin-bottom: 4px;
+        }
+        .cnm-ver-source-github {
+            color: #10b981;
+            font-style: normal;
+            font-weight: 500;
+        }
 
-        /* ---------- Update chip ---------- */
         .cnm-updates-chip {
             padding: 6px 12px;
             font-size: 12px;
@@ -2646,7 +2720,6 @@ function injectStyles() {
             background: #6b7280;
         }
 
-        /* ---------- Clickable badges ---------- */
         .cnm-badge-clickable {
             cursor: pointer;
             transition: filter 0.15s, transform 0.1s;
@@ -2659,7 +2732,6 @@ function injectStyles() {
             transform: translateY(0);
         }
 
-        /* ---------- Stash rows ---------- */
         .cnm-stash-row {
             display: flex; align-items: flex-start; gap: 12px;
             padding: 12px;
@@ -2790,19 +2862,7 @@ function injectStyles() {
             gap: 6px;
             align-self: flex-start;
         }
-        .cnm-ver-source {
-            font-size: 11px;
-            color: var(--descrip-text);
-            font-style: italic;
-            margin-top: -6px;
-            margin-bottom: 4px;
-        }
-        .cnm-ver-source-github {
-            color: #10b981;
-            font-style: normal;
-            font-weight: 500;
-        }
-        /* ---------- Select bar ---------- */
+
         .cnm-select-bar {
             display: flex;
             align-items: center;
@@ -2815,52 +2875,7 @@ function injectStyles() {
             font-size: 12px;
             color: var(--descrip-text);
         }
-        /* ---------- Popup header: заголовок и ✕ в одну строку ---------- */
-        .cnm-pop .cnm-pop-header {
-            display: flex !important;
-            flex-direction: row !important;
-            align-items: center !important;
-            justify-content: space-between !important;
-            gap: 10px !important;
-            padding: 12px 16px !important;
-            border-bottom: 1px solid var(--border-color);
-        }
-        .cnm-pop .cnm-pop-header .cnm-pop-title {
-            flex: 1 1 auto !important;
-            min-width: 0 !important;
-            margin: 0 !important;
-            font-size: 15px;
-            font-weight: 600;
-            color: var(--fg-color);
-            word-break: break-word;
-        }
-        .cnm-pop .cnm-pop-header .cnm-pop-header-close {
-            flex: 0 0 auto !important;
-            width: 26px !important;
-            height: 26px !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            background: transparent;
-            border: 1px solid var(--border-color);
-            color: var(--descrip-text);
-            cursor: pointer;
-            border-radius: 4px;
-            font-size: 13px;
-            line-height: 1;
-            display: inline-flex !important;
-            align-items: center;
-            justify-content: center;
-            transition: background 0.15s, color 0.15s;
-        }
-        .cnm-pop .cnm-pop-header .cnm-pop-header-close:hover {
-            background: var(--comfy-menu-secondary-bg);
-            color: var(--fg-color);
-        }
-        .cnm-pop .cnm-pop-header .cnm-pop-header-close:active {
-            background: rgba(220,38,38,0.15);
-            color: #ef4444;
-            border-color: #ef4444;
-        }
+
         .cnm-detected-url {
             font-size: 11px;
             color: var(--descrip-text);
@@ -2868,22 +2883,6 @@ function injectStyles() {
         }
         .cnm-detected-url:hover {
             text-decoration: underline;
-        }
-        /* ---------- Version badge ---------- */
-        .cnm-badge-version {
-            background: rgba(59,130,246,0.18);
-            color: var(--fg-color);
-            border: 1px solid rgba(59,130,246,0.4);
-            font-weight: 600;
-        }
-        .cnm-badge-version-text {
-            font-family: monospace;
-        }
-        .cnm-badge-source {
-            font-size: 10px;
-            font-weight: 400;
-            color: var(--descrip-text);
-            opacity: 0.85;
         }
     `;
     document.head.appendChild(style);
