@@ -1,6 +1,6 @@
 import { app } from "../../../scripts/app.js";
 
-console.log("🦊 CNM JS v25 (security) loaded at", new Date().toLocaleTimeString());
+console.log("🦊 CNM JS v29 (security) loaded at", new Date().toLocaleTimeString());
 
 const STORAGE_KEY = "CustomNodeManager.ShowTopbarIcon";
 
@@ -279,11 +279,95 @@ const I18N = {
         zh: "显示所有节点（重置筛选）",
         ru: "Показать все ноды (сбросить фильтры)",
     },
+    language_label: {
+        en: "Language",
+        zh: "语言",
+        ru: "Язык",
+    },
+    language_btn_tip: {
+        en: "Change UI language",
+        zh: "更改界面语言",
+        ru: "Сменить язык интерфейса",
+    },
+    clean_vram_btn: {
+        en: "Clean VRAM",
+        zh: "清理显存",
+        ru: "Очистить VRAM",
+    },
+    clean_vram_tip: {
+        en: "Unload models and free GPU memory",
+        zh: "卸载模型并释放显存",
+        ru: "Выгрузить модели и освободить VRAM",
+    },
+    clean_vram_done: {
+        en: "VRAM cleaned",
+        zh: "显存已清理",
+        ru: "VRAM очищена",
+    },
+    clean_vram_failed: {
+        en: "Failed to clean VRAM",
+        zh: "清理显存失败",
+        ru: "Не удалось очистить VRAM",
+    },
+    updates_indicator_tip: {
+        en: "{n} updates available",
+        zh: "发现 {n} 个更新",
+        ru: "Доступно обновлений: {n}",
+    },
+    updates_none_tip: {
+        en: "No updates available",
+        zh: "没有可用更新",
+        ru: "Обновлений нет",
+    },
 };
+
+const LANGUAGES = [
+    { value: "auto", label: "Auto (follow ComfyUI)" },
+    { value: "en", label: "English" },
+    { value: "zh", label: "中文" },
+    { value: "ru", label: "Русский" },
+];
+
+function _getSettingValue(id) {
+    try {
+        const v = app?.ui?.settings?.getSettingValue?.(id);
+        if (v !== undefined) return v;
+    } catch (e) { }
+    try {
+        const v = app?.extensionManager?.setting?.getSettingValue?.(id);
+        if (v !== undefined) return v;
+    } catch (e) { }
+    return undefined;
+}
+
+function _setSettingValue(id, value) {
+    try {
+        app?.ui?.settings?.setSettingValue?.(id, value);
+        return;
+    } catch (e) { }
+    try {
+        app?.extensionManager?.setting?.setSettingValue?.(id, value);
+    } catch (e) { }
+}
+
+function _getLocaleOverride() {
+    const v = _getSettingValue("CustomNodeManager.Locale");
+    if (typeof v === "string" && v) return v;
+    return "auto";
+}
 
 function _detectLocale() {
     try {
-        const v = app?.ui?.settings?.getSettingValue?.("Comfy.Locale");
+        const override = _getLocaleOverride();
+        if (override && override !== "auto") {
+            if (override === "zh") return "zh";
+            if (override === "ru") return "ru";
+            if (override === "en") return "en";
+        }
+    } catch (e) { }
+
+    try {
+        const v = _getSettingValue("Comfy.Locale");
         if (typeof v === "string" && v) {
             const low = v.toLowerCase();
             if (low.startsWith("zh")) return "zh";
@@ -345,6 +429,8 @@ app.registerExtension({
     name: "CustomNodeManager",
 
     async setup() {
+        injectStyles();
+
         app.ui.settings.addSetting({
             id: "CustomNodeManager.Open",
             name: "Custom Node Manager",
@@ -358,9 +444,39 @@ app.registerExtension({
             defaultValue: "",
         });
 
+        app.ui.settings.addSetting({
+            id: "CustomNodeManager.Locale",
+            name: "Language",
+            type: () => {
+                const wrap = document.createElement("div");
+                wrap.style.display = "flex";
+                wrap.style.alignItems = "center";
+                wrap.style.gap = "8px";
+
+                const select = document.createElement("select");
+                select.className = "cnm-settings-select";
+                for (const lang of LANGUAGES) {
+                    const opt = document.createElement("option");
+                    opt.value = lang.value;
+                    opt.textContent = lang.label;
+                    select.appendChild(opt);
+                }
+                select.value = _getLocaleOverride();
+                select.onchange = () => {
+                    _setSettingValue("CustomNodeManager.Locale", select.value);
+                    _retranslateUI();
+                };
+
+                wrap.appendChild(select);
+                return wrap;
+            },
+        });
+
         if (localStorage.getItem(STORAGE_KEY) === "true") {
             waitForActionBar((bar) => injectTopbarButton(bar));
         }
+
+        _startTopbarWatchdog();
 
         _ensureToken().catch((e) => {
             console.warn("🦊 Token prefetch failed (will retry on demand):", e);
@@ -385,7 +501,7 @@ function buildSettingsEntry() {
     toggle.checked = localStorage.getItem(STORAGE_KEY) === "true";
     toggle.onchange = () => {
         localStorage.setItem(STORAGE_KEY, toggle.checked ? "true" : "false");
-        const existing = document.getElementById("cnm-topbar-btn");
+        const existing = document.getElementById("cnm-topbar-block");
         if (toggle.checked) {
             waitForActionBar((bar) => injectTopbarButton(bar));
         } else if (existing) {
@@ -467,43 +583,132 @@ function waitForActionBar(callback) {
 }
 
 function injectTopbarButton(actionBar) {
-    if (document.getElementById("cnm-topbar-btn")) return;
+    if (localStorage.getItem(STORAGE_KEY) !== "true") return;
+    if (document.getElementById("cnm-topbar-block")) return;
+    if (!actionBar || !document.body.contains(actionBar)) return;
 
-    const btn = document.createElement("button");
-    btn.id = "cnm-topbar-btn";
-    btn.className = "comfyui-button";
-    btn.title = "Custom Node Manager";
-    btn.innerHTML = `<span style="font-size:18px;line-height:1;">🦊</span>`;
-    btn.onclick = openManagerModal;
+    const block = document.createElement("div");
+    block.id = "cnm-topbar-block";
+    block.className = "cnm-topbar-block";
 
-    Object.assign(btn.style, {
-        width: "38px", height: "100%", minHeight: "32px", maxHeight: "40px",
-        padding: "0", margin: "0 5px",
-        display: "inline-flex", alignItems: "center", justifyContent: "center",
-        cursor: "pointer",
-        background: "var(--comfy-input-bg)", color: "var(--fg-color)",
-        border: "1px solid var(--border-color)", borderRadius: "8px",
-        boxSizing: "border-box",
-    });
-    btn.onmouseenter = () => { btn.style.background = "var(--comfy-menu-secondary-bg)"; };
-    btn.onmouseleave = () => { btn.style.background = "var(--comfy-input-bg)"; };
+    const managerBtn = document.createElement("button");
+    managerBtn.className = "cnm-topbar-btn";
+    managerBtn.title = "Custom Node Manager";
+    managerBtn.innerHTML = `<span class="cnm-topbar-icon">🦊</span>`;
+    managerBtn.onclick = () => openManagerModal();
+    block.appendChild(managerBtn);
+
+    const vramBtn = document.createElement("button");
+    vramBtn.className = "cnm-topbar-btn";
+    vramBtn.id = "cnm-topbar-vram";
+    vramBtn.title = _t("clean_vram_tip");
+    vramBtn.innerHTML = `<span class="cnm-topbar-icon">🧹</span>`;
+    vramBtn.onclick = () => cleanVram();
+    block.appendChild(vramBtn);
+
+    const updatesBtn = document.createElement("button");
+    updatesBtn.className = "cnm-topbar-btn cnm-topbar-updates";
+    updatesBtn.id = "cnm-topbar-updates";
+    updatesBtn.title = _t("updates_none_tip");
+    updatesBtn.innerHTML = `<span class="cnm-topbar-icon">🆕</span>`;
+    updatesBtn.onclick = () => openManagerModal({ hasUpdateFilter: true, triggerCheck: true });
+    block.appendChild(updatesBtn);
 
     const runContainer = actionBar.querySelector(".flex.h-full.items-center");
     if (runContainer) {
-        actionBar.insertBefore(btn, runContainer);
+        actionBar.insertBefore(block, runContainer);
     } else {
-        actionBar.appendChild(btn);
+        actionBar.appendChild(block);
+    }
+
+    loadUpdates().then(() => _refreshTopbarUpdates());
+}
+
+function _startTopbarWatchdog() {
+    if (window.__cnmTopbarWatchdog) return;
+    window.__cnmTopbarWatchdog = true;
+
+    setInterval(() => {
+        if (localStorage.getItem(STORAGE_KEY) !== "true") return;
+
+        const block = document.getElementById("cnm-topbar-block");
+        const bar = document.querySelector(".actionbar-container");
+
+        if (!bar) return;
+
+        // Блок исчез (перерисовался actionbar) — переинжектим
+        if (!block) {
+            injectTopbarButton(bar);
+            return;
+        }
+
+        // Блок есть, но потерял родителя внутри actionbar — переносим
+        if (!bar.contains(block)) {
+            try { block.remove(); } catch (e) { }
+            injectTopbarButton(bar);
+            return;
+        }
+
+        // Блок есть, но структура развалилась (например, children не в .cnm-topbar-block)
+        if (!block.classList.contains("cnm-topbar-block")) {
+            block.classList.add("cnm-topbar-block");
+        }
+    }, 500);
+}
+
+async function cleanVram() {
+    const btn = document.getElementById("cnm-topbar-vram");
+    if (btn) btn.disabled = true;
+
+    try {
+        const res = await fetch("/free", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ unload_models: true, free_memory: true }),
+        });
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        cnmToast(_t("clean_vram_done"), "success");
+    } catch (e) {
+        console.error("🦊 clean VRAM failed:", e);
+        cnmToast(_t("clean_vram_failed"), "error");
+    } finally {
+        if (btn) btn.disabled = false;
     }
 }
 
-function openManagerModal() {
+function _refreshTopbarUpdates() {
+    const btn = document.getElementById("cnm-topbar-updates");
+    if (!btn) return;
+
+    const count = Object.values(_updates).filter((u) => u && u.has_update).length;
+    const iconEl = btn.querySelector(".cnm-topbar-icon");
+    let numEl = btn.querySelector(".cnm-topbar-num");
+
+    if (count > 0) {
+        if (!numEl) {
+            numEl = document.createElement("span");
+            numEl.className = "cnm-topbar-num";
+            btn.appendChild(numEl);
+        }
+        numEl.textContent = count;
+        btn.classList.add("cnm-topbar-updates-active");
+        btn.title = _tf("updates_indicator_tip", { n: count });
+    } else {
+        if (numEl) numEl.remove();
+        btn.classList.remove("cnm-topbar-updates-active");
+        btn.title = _t("updates_none_tip");
+    }
+}
+
+function openManagerModal(opts = {}) {
     if (document.getElementById("cnm-overlay")) return;
 
     _allNodes = [];
     _query = "";
     _listSource = "";
     _selected.clear();
-    _filterHasUpdate = false;
+    _filterHasUpdate = !!opts.hasUpdateFilter;
 
     const overlay = document.createElement("div");
     overlay.id = "cnm-overlay";
@@ -517,7 +722,7 @@ function openManagerModal() {
 
     const header = document.createElement("div");
     header.className = "cnm-header";
-    header.innerHTML = `<div class="cnm-title">🦊 Custom Node Manager <span style="font-size:11px;color:var(--descrip-text);font-weight:400;">(js v25)</span></div>`;
+    header.innerHTML = `<div class="cnm-title">🦊 Custom Node Manager <span style="font-size:11px;color:var(--descrip-text);font-weight:400;">(js v29)</span></div>`;
 
     const closeBtn = document.createElement("button");
     closeBtn.className = "cnm-btn cnm-btn-small";
@@ -607,6 +812,22 @@ function openManagerModal() {
     const statusEl = document.createElement("span");
     statusEl.className = "cnm-status";
 
+    const langBtn = document.createElement("button");
+    langBtn.className = "cnm-btn cnm-btn-small cnm-lang-btn";
+    langBtn.id = "cnm-lang-btn";
+    langBtn.onclick = openLanguagePicker;
+
+    const langGlobe = document.createElement("span");
+    langGlobe.className = "cnm-lang-globe";
+    langGlobe.textContent = "🌐";
+    langBtn.appendChild(langGlobe);
+
+    const langCode = document.createElement("span");
+    langCode.className = "cnm-lang-code";
+    langCode.id = "cnm-lang-code";
+    langCode.textContent = _getCurrentLangCode();
+    langBtn.appendChild(langCode);
+
     toolbar.appendChild(allNodesBtn);
     toolbar.appendChild(installBtn);
     toolbar.appendChild(refreshBtn);
@@ -614,6 +835,7 @@ function openManagerModal() {
     toolbar.appendChild(searchWrap);
     toolbar.appendChild(updatesChip);
     toolbar.appendChild(statusEl);
+    toolbar.appendChild(langBtn);
 
     const selectBar = document.createElement("div");
     selectBar.className = "cnm-select-bar";
@@ -636,7 +858,11 @@ function openManagerModal() {
     (async () => {
         await loadUpdates();
         await loadNodes(refreshBtn, { preferCache: true });
-        maybeAutoCheckUpdates();
+        if (opts.triggerCheck) {
+            triggerCheckUpdates();
+        } else {
+            maybeAutoCheckUpdates();
+        }
     })();
 }
 
@@ -699,6 +925,7 @@ async function loadUpdates() {
         _updatesCheckedAt = data.checked_at;
         _updatesChecking = !!data.checking;
     } catch (e) { }
+    _refreshTopbarUpdates();
 }
 
 async function triggerCheckUpdates() {
@@ -784,6 +1011,105 @@ function renderUpdatesChip() {
     } else {
         chip.classList.remove("cnm-updates-chip-active");
     }
+}
+
+function _getCurrentLangCode() {
+    const override = _getLocaleOverride();
+    if (override && override !== "auto") {
+        return override.toUpperCase();
+    }
+    return _detectLocale().toUpperCase();
+}
+
+function _updateLangCode() {
+    const el = document.getElementById("cnm-lang-code");
+    if (el) el.textContent = _getCurrentLangCode();
+}
+
+function openLanguagePicker() {
+    const current = _getLocaleOverride();
+
+    const { overlay, body, footer } = _buildDialogShell({
+        title: _t("language_label"),
+        onClose: () => close(),
+    });
+
+    const listWrap = document.createElement("div");
+    listWrap.className = "cnm-lang-list";
+
+    for (const lang of LANGUAGES) {
+        const row = document.createElement("div");
+        row.className = "cnm-lang-row";
+        if (lang.value === current) row.classList.add("cnm-lang-row-current");
+
+        const nameEl = document.createElement("span");
+        nameEl.className = "cnm-lang-name";
+        nameEl.textContent = lang.label;
+        row.appendChild(nameEl);
+
+        if (lang.value === current) {
+            const mark = document.createElement("span");
+            mark.className = "cnm-lang-mark";
+            mark.textContent = "✓";
+            row.appendChild(mark);
+        }
+
+        row.onclick = () => {
+            _setSettingValue("CustomNodeManager.Locale", lang.value);
+            close();
+            _retranslateUI();
+            _updateLangCode();
+        };
+
+        listWrap.appendChild(row);
+    }
+
+    body.appendChild(listWrap);
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "cnm-btn";
+    cancelBtn.textContent = "Close";
+    cancelBtn.style.display = "none";
+    footer.appendChild(cancelBtn);
+
+    const close = () => {
+        overlay.remove();
+    };
+
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+}
+
+function _retranslateUI() {
+    const allNodesBtn = document.getElementById("cnm-all-nodes-btn");
+    if (allNodesBtn) {
+        allNodesBtn.textContent = "📂 " + _t("all_nodes_btn");
+        allNodesBtn.title = _t("all_nodes_tip");
+    }
+
+    const checkBtn = document.getElementById("cnm-check-btn");
+    if (checkBtn) {
+        checkBtn.textContent = "⬆ " + _t("check_updates_btn");
+        checkBtn.title = _t("check_updates_btn_tip");
+    }
+
+    const searchInput = document.querySelector(".cnm-search");
+    if (searchInput) {
+        searchInput.placeholder = "🔍 filter…  (-word to exclude)";
+    }
+
+    const langBtn = document.getElementById("cnm-lang-btn");
+    if (langBtn) {
+        langBtn.title = _t("language_btn_tip");
+    }
+
+    _updateLangCode();
+
+    const vramBtn = document.getElementById("cnm-topbar-vram");
+    if (vramBtn) vramBtn.title = _t("clean_vram_tip");
+
+    _refreshTopbarUpdates();
+
+    applyFilterAndRender();
 }
 
 function renderSelectBar() {
@@ -920,12 +1246,26 @@ function applyFilterAndRender() {
     const total = _allNodes.length;
     const shown = filtered.length;
     const counter = (_query.trim() || _filterHasUpdate) ? `${shown} / ${total}` : `${total}`;
-    setStatus(`${_listSource} · ${counter} nodes`);
+    setStatus(_listSource, `${counter} nodes`);
 }
 
-function setStatus(text) {
+function setStatus(source, counter) {
     const el = document.querySelector(".cnm-status");
-    if (el) el.textContent = text;
+    if (!el) return;
+
+    if (!source && !counter) {
+        el.textContent = "";
+        return;
+    }
+    if (!source) {
+        el.textContent = counter;
+        return;
+    }
+    if (!counter) {
+        el.textContent = source;
+        return;
+    }
+    el.textContent = `${source}\n${counter}`;
 }
 
 function renderNodes(list, nodes) {
@@ -2297,6 +2637,65 @@ function injectStyles() {
     const style = document.createElement("style");
     style.id = "cnm-styles";
     style.textContent = `
+        .cnm-topbar-block {
+            display: inline-flex;
+            align-items: stretch;
+            align-self: center;
+            flex: 0 0 auto;
+            height: 32px;
+            margin: 0 5px;
+            background: var(--comfy-input-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+            box-sizing: border-box;
+        }
+        .cnm-topbar-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+            padding: 0 10px;
+            margin: 0;
+            background: transparent;
+            border: none;
+            color: var(--fg-color);
+            cursor: pointer;
+            transition: background 0.15s;
+            height: 100%;
+            font-family: inherit;
+            font-size: 13px;
+            box-sizing: border-box;
+        }
+        .cnm-topbar-btn:hover:not(:disabled) {
+            background: var(--comfy-menu-secondary-bg);
+        }
+        .cnm-topbar-btn:active:not(:disabled) {
+            background: var(--comfy-menu-secondary-bg);
+            filter: brightness(0.95);
+        }
+        .cnm-topbar-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .cnm-topbar-icon {
+            font-size: 16px;
+            line-height: 1;
+        }
+        .cnm-topbar-num {
+            font-size: 11px;
+            font-weight: 700;
+            font-family: monospace;
+            color: #10b981;
+            margin-left: -1px;
+        }
+        .cnm-topbar-updates-active {
+            background: rgba(16,185,129,0.12);
+        }
+        .cnm-topbar-updates-active:hover:not(:disabled) {
+            background: rgba(16,185,129,0.22);
+        }
+
         .cnm-overlay {
             position: fixed; inset: 0; background: rgba(0,0,0,0.65);
             display: flex; align-items: center; justify-content: center;
@@ -2371,7 +2770,13 @@ function injectStyles() {
             background: var(--comfy-menu-secondary-bg);
             color: var(--fg-color);
         }
-        .cnm-status { font-size: 12px; color: var(--descrip-text); white-space: nowrap; }
+        .cnm-status {
+            font-size: 12px;
+            color: var(--descrip-text);
+            white-space: pre-line;
+            text-align: right;
+            line-height: 1.3;
+        }
         .cnm-list {
             flex: 1; overflow-y: auto;
             padding: 10px 18px 18px;
@@ -2876,6 +3281,63 @@ function injectStyles() {
             color: var(--descrip-text);
         }
 
+        .cnm-toast-container {
+            position: fixed;
+            top: 60px;
+            right: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            z-index: 14000;
+            pointer-events: none;
+        }
+        .cnm-toast {
+            background: var(--comfy-menu-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 10px 16px;
+            font-size: 13px;
+            color: var(--fg-color);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 220px;
+            max-width: 360px;
+            pointer-events: auto;
+            animation: cnmToastIn 0.2s ease-out;
+            white-space: pre-line;
+        }
+        .cnm-toast.cnm-toast-out {
+            animation: cnmToastOut 0.25s ease-in forwards;
+        }
+        @keyframes cnmToastIn {
+            from { transform: translateX(20px); opacity: 0; }
+            to   { transform: translateX(0);    opacity: 1; }
+        }
+        @keyframes cnmToastOut {
+            from { transform: translateX(0);    opacity: 1; }
+            to   { transform: translateX(20px); opacity: 0; }
+        }
+        .cnm-toast-icon {
+            flex: 0 0 auto;
+            font-size: 15px;
+            line-height: 1;
+        }
+        .cnm-toast-text {
+            flex: 1 1 auto;
+            word-break: break-word;
+        }
+        .cnm-toast-success {
+            border-left: 3px solid #10b981;
+        }
+        .cnm-toast-error {
+            border-left: 3px solid #dc2626;
+        }
+        .cnm-toast-info {
+            border-left: 3px solid #3b82f6;
+        }
+
         .cnm-detected-url {
             font-size: 11px;
             color: var(--descrip-text);
@@ -2883,6 +3345,79 @@ function injectStyles() {
         }
         .cnm-detected-url:hover {
             text-decoration: underline;
+        }
+        .cnm-settings-select {
+            padding: 4px 8px;
+            font-size: 13px;
+            background: var(--comfy-input-bg);
+            color: var(--fg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            cursor: pointer;
+            min-width: 180px;
+        }
+        .cnm-settings-select:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+
+        .cnm-lang-btn {
+            padding: 6px 10px;
+            font-size: 12px;
+            line-height: 1;
+            flex: 0 0 auto;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+        }
+        .cnm-lang-btn .cnm-lang-globe {
+            font-size: 13px;
+            line-height: 1;
+        }
+        .cnm-lang-btn .cnm-lang-code {
+            font-size: 11px;
+            font-family: monospace;
+            color: var(--descrip-text);
+            font-weight: 700;
+        }
+
+        .cnm-lang-list {
+            display: flex; flex-direction: column;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            overflow: hidden;
+            background: var(--bg-color);
+        }
+        .cnm-lang-row {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 10px 14px;
+            cursor: pointer;
+            transition: background 0.1s;
+            user-select: none;
+            font-size: 13px;
+            color: var(--fg-color);
+        }
+        .cnm-lang-row + .cnm-lang-row {
+            border-top: 1px solid var(--border-color);
+        }
+        .cnm-lang-row:hover {
+            background: var(--comfy-menu-secondary-bg);
+        }
+        .cnm-lang-row-current {
+            background: rgba(59,130,246,0.08);
+        }
+        .cnm-lang-row-current:hover {
+            background: rgba(59,130,246,0.08);
+        }
+        .cnm-lang-name {
+            flex: 1 1 auto;
+        }
+        .cnm-lang-mark {
+            color: #10b981;
+            font-weight: 600;
+            margin-left: 8px;
         }
     `;
     document.head.appendChild(style);
@@ -2896,6 +3431,57 @@ function _isNetworkError(e) {
         /network|failed to fetch|fetch resource/i.test(msg)
     );
 }
+
+function _getToastContainer() {
+    let c = document.getElementById("cnm-toast-container");
+    if (!c) {
+        c = document.createElement("div");
+        c.id = "cnm-toast-container";
+        c.className = "cnm-toast-container";
+        document.body.appendChild(c);
+    }
+    return c;
+}
+
+function cnmToast(message, type = "info", durationMs = 3000) {
+    const container = _getToastContainer();
+
+    const toast = document.createElement("div");
+    toast.className = `cnm-toast cnm-toast-${type}`;
+
+    const icon = document.createElement("span");
+    icon.className = "cnm-toast-icon";
+    if (type === "success") icon.textContent = "✅";
+    else if (type === "error") icon.textContent = "❌";
+    else icon.textContent = "ℹ️";
+    toast.appendChild(icon);
+
+    const text = document.createElement("span");
+    text.className = "cnm-toast-text";
+    text.textContent = message;
+    toast.appendChild(text);
+
+    container.appendChild(toast);
+
+    const remove = () => {
+        toast.classList.add("cnm-toast-out");
+        setTimeout(() => {
+            try { toast.remove(); } catch (e) { }
+            if (container.children.length === 0) {
+                try { container.remove(); } catch (e) { }
+            }
+        }, 250);
+    };
+
+    setTimeout(remove, durationMs);
+    return { close: remove };
+}
+
+window._cnmTestToast = function () {
+    cnmToast("Test success message", "success");
+    setTimeout(() => cnmToast("Test error message", "error"), 400);
+    setTimeout(() => cnmToast("Test info message", "info"), 800);
+};
 
 function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({

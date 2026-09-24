@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-09-24
+
+### Added
+- **Language picker**: manual override for UI language (Auto / English / 中文 / Русский). Available both in Settings and as a compact `🌐 XX` button in the modal toolbar. Override takes priority over `Comfy.Locale`
+- **VRAM cleaner**: `🧹` button in the top bar block — calls `POST /free` to unload models and free GPU memory
+- **Updates indicator**: `🆕 N` badge in the top bar block, updates live. Click opens the manager with the "has update" filter applied and triggers a background check
+- **Top bar block**: `[🦊 🧹 🆕N]` — single visual unit, with watchdog to survive ComfyUI reactivity redraws
+- **Toast notification system**: top-right corner, auto-dismiss after 3 seconds, three severity levels
+- **Startup bootstrap**: after 5 seconds, background scan and update check. By the time the user opens the browser, cache is already fresh
+
+### Changed
+- Status line in the manager toolbar is now two-line (`cached · <time>` / `N nodes`) for better readability
+- `injectStyles()` runs on extension setup instead of waiting for the modal to open — top bar block has correct styling from page load
+- Top bar block has fixed 32px height, independent of parent flex context
+
+### Fixed
+- `Show icon in top menu` checkbox now correctly targets the new block element
+
 ## [0.3.1] - 2026-09-24
 
 ### Security

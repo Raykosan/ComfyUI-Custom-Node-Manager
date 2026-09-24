@@ -554,6 +554,76 @@ def _on_task_success(task) -> None:
 
 task_queue.set_post_success_hook(_on_task_success)
 
+_bootstrap_started = False
+BOOTSTRAP_DELAY = 5.0
+UPDATE_TTL_SECONDS = 6 * 60 * 60
+
+
+async def _startup_bootstrap_worker():
+    global _bootstrap_started, _update_check_task
+
+    if _bootstrap_started:
+        return
+    _bootstrap_started = True
+
+    logger.info(f"[Bootstrap] Scheduled, delay {BOOTSTRAP_DELAY}s")
+    await asyncio.sleep(BOOTSTRAP_DELAY)
+
+    loop = asyncio.get_running_loop()
+
+    try:
+        cache = _load_cache()
+        nodes = cache.get("nodes") or {}
+
+        if not nodes:
+            logger.info("[Bootstrap] Node cache empty, scanning custom_nodes...")
+            scanned = await loop.run_in_executor(None, scan_all_nodes)
+            cache = _load_cache()
+            cache["nodes"] = {n["folder"]: n for n in scanned}
+            cache["updated"] = _now_iso()
+            _save_cache(cache)
+            logger.info(f"[Bootstrap] Scanned {len(scanned)} nodes")
+        else:
+            logger.info(f"[Bootstrap] Node cache has {len(nodes)} entries, skipping scan")
+    except Exception:
+        logger.exception("[Bootstrap] Scan failed")
+
+    try:
+        cache = _load_cache()
+        checked_at = cache.get("updates_checked")
+        age = None
+        if checked_at:
+            try:
+                dt = _dt.datetime.fromisoformat(checked_at)
+                age = (_dt.datetime.now() - dt).total_seconds()
+            except Exception:
+                age = None
+
+        if age is not None and age < UPDATE_TTL_SECONDS:
+            logger.info(f"[Bootstrap] Updates fresh ({int(age)}s old), skipping check")
+            return
+
+        if _update_check_task and not _update_check_task.done():
+            logger.info("[Bootstrap] Update check already running, skipping")
+            return
+
+        age_str = f"{int(age)}s" if age is not None else "never"
+        logger.info(f"[Bootstrap] Starting update check (age: {age_str})")
+        _update_check_task = asyncio.create_task(_run_update_check())
+    except Exception:
+        logger.exception("[Bootstrap] Update check failed")
+
+
+async def _bootstrap_hook(app=None):
+    asyncio.create_task(_startup_bootstrap_worker())
+
+
+try:
+    PromptServer.instance.app.on_startup.append(_bootstrap_hook)
+    logger.info("[Bootstrap] Registered on_startup hook")
+except Exception:
+    logger.exception("[Bootstrap] Failed to register on_startup hook")
+
 
 @PromptServer.instance.routes.get("/custom_node_manager/ping")
 @security.local_only
