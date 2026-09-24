@@ -94,7 +94,7 @@ Search for `Custom Node Manager` in the Install Custom Nodes dialog.
 ### Manual
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/YOUR-USERNAME/ComfyUI-Custom-Node-Manager
+git clone https://github.com/Raykosan/ComfyUI-Custom-Node-Manager
 ```
 
 No additional setup required. Dependencies (`requests`, `tomli`) are installed automatically on first launch.
