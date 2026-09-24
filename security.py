@@ -82,15 +82,50 @@ def validate_git_url(url: str) -> tuple:
     return True, ""
 
 
+def _is_loopback_host(host_header: str) -> bool:
+    if not host_header:
+        return False
+
+    if host_header.startswith("["):
+        end = host_header.find("]")
+        if end == -1:
+            return False
+        hostname = host_header[1:end]
+    else:
+        hostname = host_header.split(":", 1)[0]
+
+    hostname = hostname.strip().lower()
+    if not hostname:
+        return False
+
+    if hostname == "localhost":
+        return True
+
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
 def is_local_request(request) -> bool:
     remote = (request.remote or "").strip()
     if not remote:
         return False
     try:
         ip = ipaddress.ip_address(remote)
-        return ip.is_loopback
+        if not ip.is_loopback:
+            return False
     except ValueError:
         return False
+
+    if not _is_loopback_host(request.host or ""):
+        logger.warning(
+            f"Blocked non-loopback Host header: "
+            f"{request.host!r} (DNS rebinding protection)"
+        )
+        return False
+
+    return True
 
 
 def _forbidden(msg: str = "forbidden"):

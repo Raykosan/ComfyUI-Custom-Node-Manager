@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-09-24
+
+### Security
+- Fixed DNS rebinding vulnerability in `GET /custom_node_manager/token`
+  (reported by CodeRabbit). `is_local_request` now also validates the
+  `Host` header — a request must have both a loopback TCP peer and a
+  loopback `Host` value. This blocks attacker pages that rebind DNS to
+  `127.0.0.1` while still carrying `Host: evil.com`.
+
 ## [0.3.0] - 2026-09-22
 
 ### Security
