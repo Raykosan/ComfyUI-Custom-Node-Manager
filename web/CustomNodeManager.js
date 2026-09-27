@@ -1,6 +1,6 @@
 import { app } from "../../../scripts/app.js";
 
-console.log("🦊 CNM JS v35 (security) loaded at", new Date().toLocaleTimeString());
+console.log("🦊 CNM JS v37 (security) loaded at", new Date().toLocaleTimeString());
 
 const STORAGE_KEY = "CustomNodeManager.ShowTopbarIcon";
 
@@ -660,7 +660,7 @@ function injectTopbarButton(actionBar) {
     updatesBtn.className = "cnm-topbar-btn cnm-topbar-updates";
     updatesBtn.id = "cnm-topbar-updates";
     updatesBtn.title = _t("updates_none_tip");
-    updatesBtn.innerHTML = `<span class="cnm-topbar-icon">🆕</span>`;
+    updatesBtn.innerHTML = `<span class="cnm-topbar-icon">🔔</span>`;
     updatesBtn.onclick = () => openManagerModal({ hasUpdateFilter: true, triggerCheck: true });
     block.appendChild(updatesBtn);
 
@@ -769,7 +769,7 @@ function openManagerModal(opts = {}) {
 
     const header = document.createElement("div");
     header.className = "cnm-header";
-    header.innerHTML = `<div class="cnm-title">🦊 Custom Node Manager <span style="font-size:11px;color:var(--descrip-text);font-weight:400;">(js v35)</span></div>`;
+    header.innerHTML = `<div class="cnm-title">🦊 Custom Node Manager <span style="font-size:11px;color:var(--descrip-text);font-weight:400;">(js v37)</span></div>`;
 
     const closeBtn = document.createElement("button");
     closeBtn.className = "cnm-btn cnm-btn-small";
@@ -2949,10 +2949,9 @@ function injectStyles() {
             align-self: center;
             flex: 0 0 auto;
             height: 32px;
-            margin: 0 5px;
-            background: var(--comfy-input-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
+            margin: 0 0 0 5px;
+            background: #2b2a32;
+            border-radius: 6px;
             overflow: hidden;
             box-sizing: border-box;
         }
@@ -2974,11 +2973,11 @@ function injectStyles() {
             box-sizing: border-box;
         }
         .cnm-topbar-btn:hover:not(:disabled) {
-            background: var(--comfy-menu-secondary-bg);
+            background: #52525e;
         }
         .cnm-topbar-btn:active:not(:disabled) {
-            background: var(--comfy-menu-secondary-bg);
-            filter: brightness(0.95);
+            background: #52525e;
+            filter: brightness(0.92);
         }
         .cnm-topbar-btn:disabled {
             opacity: 0.5;
@@ -2989,17 +2988,18 @@ function injectStyles() {
             line-height: 1;
         }
         .cnm-topbar-num {
-            font-size: 11px;
-            font-weight: 700;
+            font-size: 16px;
+            font-weight: 800;
             font-family: monospace;
             color: #10b981;
-            margin-left: -1px;
+            margin-left: 1px;
+            line-height: 1;
         }
         .cnm-topbar-updates-active {
-            background: rgba(16,185,129,0.12);
+            background: #2b2a32;
         }
         .cnm-topbar-updates-active:hover:not(:disabled) {
-            background: rgba(16,185,129,0.22);
+            background: #52525e;
         }
 
         .cnm-overlay {
