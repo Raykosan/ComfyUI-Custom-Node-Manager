@@ -1,3 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2025-2026 Raykosan (RaykoStudio)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import os
 import sys
 import re
@@ -41,7 +56,7 @@ _gh_token_used = None
 _bootstrap_started = False
 _bootstrap_running = False
 BOOTSTRAP_DELAY = 1.0
-UPDATE_TTL_SECONDS = 6 * 60 * 60
+UPDATE_TTL_SECONDS = 60 * 60
 
 
 def _get_gh_client():
@@ -1031,10 +1046,18 @@ async def api_attach_remote(request):
         logger.exception(f"attach_remote({folder}) упал")
         return web.json_response({"error": str(e)}, status=500)
 
-    cache = _load_cache()
-    cache["nodes"] = {}
-    cache["updated"] = None
-    _save_cache(cache)
+    loop2 = asyncio.get_running_loop()
+    try:
+        info = await loop2.run_in_executor(None, _scan_single_node, node_dir)
+        if info:
+            info["base"] = os.path.dirname(node_dir)
+            cache = _load_cache()
+            nodes = cache.get("nodes") or {}
+            nodes[folder] = info
+            cache["nodes"] = nodes
+            _save_cache(cache)
+    except Exception:
+        logger.exception(f"post-attach refresh failed for {folder}")
 
     return web.json_response({"success": True, "folder": folder, **result})
 
@@ -1155,6 +1178,95 @@ async def api_restart(request):
     except Exception as e:
         logger.exception("Не удалось перезапустить")
         return web.json_response({"error": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.post("/custom_node_manager/refresh_node")
+@security.local_and_token
+async def api_refresh_node(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json"}, status=400)
+
+    folders = data.get("folders")
+    if folders is None:
+        single = (data.get("folder") or "").strip()
+        folders = [single] if single else []
+
+    if not isinstance(folders, list) or not folders:
+        return web.json_response({"error": "folder(s) required"}, status=400)
+
+    loop = asyncio.get_running_loop()
+    cache = _load_cache()
+    nodes = cache.get("nodes") or {}
+    updates = cache.get("updates") or {}
+
+    refreshed = []
+    not_found = []
+    changed = False
+
+    for folder in folders:
+        folder = str(folder).strip()
+        if not folder:
+            continue
+
+        node_dir = _find_node_dir(folder)
+        if not node_dir:
+            not_found.append(folder)
+            continue
+
+        try:
+            info = await loop.run_in_executor(None, _scan_single_node, node_dir)
+        except Exception:
+            logger.exception(f"refresh_node({folder}) scan failed")
+            not_found.append(folder)
+            continue
+
+        if not info:
+            not_found.append(folder)
+            continue
+
+        info["base"] = os.path.dirname(node_dir)
+        nodes[folder] = info
+        refreshed.append(folder)
+
+        if folder in updates:
+            del updates[folder]
+
+        changed = True
+
+    if changed:
+        cache["nodes"] = nodes
+        cache["updates"] = updates
+        _save_cache(cache)
+        logger.info(f"Refreshed {len(refreshed)} node(s): {', '.join(refreshed)}")
+
+    return web.json_response({
+        "success": True,
+        "refreshed": refreshed,
+        "not_found": not_found,
+        "nodes": [nodes[f] for f in refreshed if f in nodes],
+    })
+
+
+@PromptServer.instance.routes.get("/custom_node_manager/preview_update/{folder}")
+@security.local_only
+async def api_preview_update(request):
+    folder = request.match_info["folder"]
+    node_dir = _find_node_dir(folder)
+    if not node_dir:
+        return web.json_response({"error": f"Нода не найдена: {folder}"}, status=404)
+    if not git_ops.git_available():
+        return web.json_response({"error": "git не найден в PATH"}, status=500)
+
+    loop = asyncio.get_running_loop()
+    try:
+        data = await loop.run_in_executor(None, git_ops.preview_update, node_dir)
+    except Exception as e:
+        logger.exception(f"preview_update({folder}) упал")
+        return web.json_response({"error": str(e)}, status=500)
+
+    return web.json_response({"success": True, "folder": folder, **data})
 
 
 WEB_DIRECTORY = "./web"

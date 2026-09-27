@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-09-27
+
+### Added
+- **Diff preview** before update: clicking "Latest version" shows the commits that will be pulled, files changed, and `+insertions −deletions` stats before confirming
+- **Refresh one node** endpoint: updates a single node's metadata in `cache.json` without a full rescan. Used after stash Restore/Drop and Attach Remote
+- **Fuzzy search**: if exact substring match fails, tokens of 3+ characters are matched as a character sequence against folder and name (e.g. `wscu` → `was-node-suite-comfyui`). Descriptions and URLs still require exact match
+- **Toast notifications** now appear centered on screen (and centered inside the modal when open), with colored border and glow per severity level
+
+### Changed
+- Update check TTL reduced from 6 hours to 1 hour — nodes update frequently, and `git ls-remote` is cheap
+- Startup bootstrap delay reduced from 5s to 1s
+- `GET /cache` now waits up to 5 seconds if bootstrap is still running — the first Manager open after a fresh start gets a ready node list without triggering its own scan
+
+### Fixed
+- Attach Remote no longer invalidates the entire node cache — only the affected node is rescanned
+- Toast border no longer relies on a single-side colored stripe
+
 ## [0.4.0] - 2026-09-24
 
 ### Added

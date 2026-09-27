@@ -459,3 +459,109 @@ def non_interactive_env() -> dict:
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GCM_INTERACTIVE"] = "Never"
     return env
+
+# --- Preview update -----------------------------------------------------
+
+def preview_update(node_dir: str) -> dict:
+    """
+    Делает git fetch и возвращает сводку предстоящего pull:
+    коммиты, файлы, статистику.
+    Не изменяет рабочее дерево.
+    """
+    if not git_available():
+        raise RuntimeError("git не найден в PATH")
+    if not os.path.isdir(os.path.join(node_dir, ".git")):
+        raise RuntimeError(f"Не git-репозиторий: {node_dir}")
+
+    # Определяем текущую ветку
+    rc, out, _ = run_git(node_dir, "symbolic-ref", "-q", "--short", "HEAD")
+    branch = out.strip() if rc == 0 and out else None
+
+    if not branch:
+        branch = _find_default_branch(node_dir)
+        if not branch:
+            raise RuntimeError("Detached HEAD и не удалось определить ветку")
+
+    # Fetch
+    rc, out, err = run_git(node_dir, "fetch", "origin", "--tags", "--prune")
+    if rc != 0:
+        raise RuntimeError(f"git fetch не удался: {err or out}")
+
+    remote_ref = f"origin/{branch}"
+
+    # Проверяем, что удалённая ветка существует
+    rc, out, _ = run_git(node_dir, "rev-parse", "--verify", remote_ref)
+    if rc != 0:
+        raise RuntimeError(f"Удалённая ветка не найдена: {remote_ref}")
+
+    # Логи
+    commits = []
+    rc, out, _ = run_git(
+        node_dir, "log", f"HEAD..{remote_ref}",
+        "--format=%h|%s", "--max-count=21"
+    )
+    if rc == 0 and out:
+        for line in out.splitlines():
+            parts = line.split("|", 1)
+            if len(parts) == 2:
+                commits.append({"sha": parts[0], "subject": parts[1]})
+
+    more_commits = 0
+    if len(commits) > 20:
+        more_commits = len(commits) - 20
+        commits = commits[:20]
+
+    # Общая статистика
+    files_changed = 0
+    insertions = 0
+    deletions = 0
+    rc, out, _ = run_git(node_dir, "diff", "--shortstat", f"HEAD..{remote_ref}")
+    if rc == 0 and out:
+        m = re.search(r"(\d+)\s+files?\s+changed", out)
+        if m:
+            files_changed = int(m.group(1))
+        m = re.search(r"(\d+)\s+insertions?", out)
+        if m:
+            insertions = int(m.group(1))
+        m = re.search(r"(\d+)\s+deletions?", out)
+        if m:
+            deletions = int(m.group(1))
+
+    # Файлы (топ-5 по изменениям)
+    files = []
+    rc, out, _ = run_git(node_dir, "diff", "--numstat", f"HEAD..{remote_ref}")
+    if rc == 0 and out:
+        raw = []
+        for line in out.splitlines():
+            parts = line.split("\t")
+            if len(parts) == 3:
+                ins_s, del_s, path = parts
+                try:
+                    ins = int(ins_s) if ins_s != "-" else 0
+                    dels = int(del_s) if del_s != "-" else 0
+                except ValueError:
+                    continue
+                raw.append({
+                    "path": path,
+                    "insertions": ins,
+                    "deletions": dels,
+                    "total": ins + dels,
+                })
+        raw.sort(key=lambda f: f["total"], reverse=True)
+        files = raw[:5]
+
+    # Dirty?
+    rc, out, _ = run_git(node_dir, "status", "--porcelain")
+    is_dirty = rc == 0 and bool(out.strip())
+
+    return {
+        "branch": branch,
+        "commits": commits,
+        "more_commits": more_commits,
+        "total_commits": len(commits) + more_commits,
+        "files_changed": files_changed,
+        "insertions": insertions,
+        "deletions": deletions,
+        "files": files,
+        "dirty": is_dirty,
+    }

@@ -1,6 +1,6 @@
 import { app } from "../../../scripts/app.js";
 
-console.log("🦊 CNM JS v29 (security) loaded at", new Date().toLocaleTimeString());
+console.log("🦊 CNM JS v35 (security) loaded at", new Date().toLocaleTimeString());
 
 const STORAGE_KEY = "CustomNodeManager.ShowTopbarIcon";
 
@@ -317,6 +317,56 @@ const I18N = {
     updates_none_tip: {
         en: "No updates available",
         zh: "没有可用更新",
+        ru: "Обновлений нет",
+    },
+    preview_title: {
+        en: "Update — {folder}",
+        zh: "更新 — {folder}",
+        ru: "Обновление — {folder}",
+    },
+    preview_commits_header: {
+        en: "{n} commit(s) to pull:",
+        zh: "将拉取 {n} 个提交：",
+        ru: "Будет получено коммитов: {n}",
+    },
+    preview_more_commits: {
+        en: "… and {n} more commits",
+        zh: "… 还有 {n} 个提交",
+        ru: "… и ещё {n} коммитов",
+    },
+    preview_no_commits: {
+        en: "Already up to date.",
+        zh: "已是最新。",
+        ru: "Уже актуально.",
+    },
+    preview_stats: {
+        en: "{files} file(s) changed · +{ins} −{del}",
+        zh: "已更改 {files} 个文件 · +{ins} −{del}",
+        ru: "Изменено файлов: {files} · +{ins} −{del}",
+    },
+    preview_more_files: {
+        en: "… and {n} more files",
+        zh: "… 还有 {n} 个文件",
+        ru: "… и ещё {n} файлов",
+    },
+    preview_dirty_warning: {
+        en: "⚠ Local changes will be auto-stashed before update.",
+        zh: "⚠ 更新前将自动暂存本地更改。",
+        ru: "⚠ Локальные изменения будут автоматически сохранены в stash.",
+    },
+    preview_update_btn: {
+        en: "Update now",
+        zh: "立即更新",
+        ru: "Обновить",
+    },
+    preview_failed_title: {
+        en: "Preview unavailable",
+        zh: "无法预览",
+        ru: "Не удалось получить превью",
+    },
+    preview_already_up_to_date: {
+        en: "Already up to date",
+        zh: "已是最新",
         ru: "Обновлений нет",
     },
 };
@@ -636,20 +686,17 @@ function _startTopbarWatchdog() {
 
         if (!bar) return;
 
-        // Блок исчез (перерисовался actionbar) — переинжектим
         if (!block) {
             injectTopbarButton(bar);
             return;
         }
 
-        // Блок есть, но потерял родителя внутри actionbar — переносим
         if (!bar.contains(block)) {
             try { block.remove(); } catch (e) { }
             injectTopbarButton(bar);
             return;
         }
 
-        // Блок есть, но структура развалилась (например, children не в .cnm-topbar-block)
         if (!block.classList.contains("cnm-topbar-block")) {
             block.classList.add("cnm-topbar-block");
         }
@@ -722,7 +769,7 @@ function openManagerModal(opts = {}) {
 
     const header = document.createElement("div");
     header.className = "cnm-header";
-    header.innerHTML = `<div class="cnm-title">🦊 Custom Node Manager <span style="font-size:11px;color:var(--descrip-text);font-weight:400;">(js v29)</span></div>`;
+    header.innerHTML = `<div class="cnm-title">🦊 Custom Node Manager <span style="font-size:11px;color:var(--descrip-text);font-weight:400;">(js v35)</span></div>`;
 
     const closeBtn = document.createElement("button");
     closeBtn.className = "cnm-btn cnm-btn-small";
@@ -763,7 +810,7 @@ function openManagerModal(opts = {}) {
     const searchInput = document.createElement("input");
     searchInput.type = "text";
     searchInput.className = "cnm-search";
-    searchInput.placeholder = "🔍 filter…  (-word to exclude)";
+    searchInput.placeholder = "🔍 search…";
     searchInput.autocomplete = "off";
     searchInput.spellcheck = false;
 
@@ -1094,7 +1141,7 @@ function _retranslateUI() {
 
     const searchInput = document.querySelector(".cnm-search");
     if (searchInput) {
-        searchInput.placeholder = "🔍 filter…  (-word to exclude)";
+        searchInput.placeholder = "🔍 search…";
     }
 
     const langBtn = document.getElementById("cnm-lang-btn");
@@ -1199,6 +1246,27 @@ function updateAllNodesBtn() {
     }
 }
 
+function _fuzzyMatch(haystack, needle) {
+    if (needle.length === 0) return true;
+    if (needle.length > haystack.length) return false;
+
+    let hi = 0;
+    for (let ni = 0; ni < needle.length; ni++) {
+        const ch = needle[ni];
+        hi = haystack.indexOf(ch, hi);
+        if (hi === -1) return false;
+        hi++;
+    }
+    return true;
+}
+
+function _exactHit(fields, token) {
+    for (const f of fields) {
+        if (f && f.includes(token)) return true;
+    }
+    return false;
+}
+
 function filterNodes(nodes, query) {
     let result = nodes;
 
@@ -1217,12 +1285,35 @@ function filterNodes(nodes, query) {
     const excludes = tokens.filter((t) => t.startsWith("-")).map((t) => t.slice(1)).filter(Boolean);
 
     return result.filter((n) => {
-        const hay = [
-            n.folder || "", n.name || "", n.description || "", n.git_url || "",
-        ].join(" ").toLowerCase();
+        const folderLower = (n.folder || "").toLowerCase();
+        const nameLower = (n.name || "").toLowerCase();
+        const descLower = (n.description || "").toLowerCase();
+        const urlLower = (n.git_url || "").toLowerCase();
 
-        for (const t of excludes) if (hay.includes(t)) return false;
-        for (const t of includes) if (!hay.includes(t)) return false;
+        const allFields = [folderLower, nameLower, descLower, urlLower];
+        const shortFields = [folderLower, nameLower];
+
+        for (const t of excludes) {
+            if (_exactHit(allFields, t)) return false;
+        }
+
+        for (const t of includes) {
+            if (_exactHit(allFields, t)) continue;
+
+            if (t.length >= 3) {
+                let fuzzy = false;
+                for (const f of shortFields) {
+                    if (f && _fuzzyMatch(f, t)) {
+                        fuzzy = true;
+                        break;
+                    }
+                }
+                if (fuzzy) continue;
+            }
+
+            return false;
+        }
+
         return true;
     });
 }
@@ -1528,6 +1619,16 @@ async function askAndSwitchVersion(node) {
     if (!choice) return;
 
     if (choice.kind === "pull") {
+        // Проверяем, есть ли смысл вообще идти в preview
+        const upd = _updates[node.folder];
+        if (upd && upd.has_update === false) {
+            cnmToast(_t("preview_already_up_to_date"), "info");
+            return;
+        }
+
+        const proceed = await _askUpdatePreview(node);
+        if (!proceed) return;
+
         await runTask({
             url: "/custom_node_manager/update",
             body: { folder: node.folder, version: null },
@@ -1544,6 +1645,35 @@ async function askAndSwitchVersion(node) {
             title: `Checkout ${node.folder} → ${choice.ref}`,
         });
     }
+}
+
+async function _askUpdatePreview(node) {
+    let preview = null;
+    try {
+        const res = await fetch(
+            `/custom_node_manager/preview_update/${encodeURIComponent(node.folder)}`,
+            { cache: "no-store" }
+        );
+        if (res.ok) {
+            const data = await res.json();
+            if (data.success) preview = data;
+        }
+    } catch (e) {
+        console.warn("🦊 preview failed, proceeding without it:", e);
+    }
+
+    // Preview недоступен — не блокируем update
+    if (!preview) return true;
+
+    // Нет коммитов — тоже не блокируем
+    if (!preview.commits || preview.commits.length === 0) {
+        return true;
+    }
+
+    return await cnmUpdatePreview({
+        folder: node.folder,
+        preview,
+    });
 }
 
 async function askAttachRemote(node) {
@@ -1590,8 +1720,13 @@ async function askAttachRemote(node) {
             }),
         });
 
-        const refreshBtn = document.querySelector(".cnm-toolbar .cnm-btn:not(.cnm-btn-primary)");
-        if (refreshBtn) loadNodes(refreshBtn, { preferCache: false });
+        const ok = await refreshOneNode(node.folder);
+        if (!ok) {
+            const refreshBtn = document.querySelector(".cnm-toolbar .cnm-btn:not(.cnm-btn-primary)");
+            if (refreshBtn) loadNodes(refreshBtn, { preferCache: false });
+        } else {
+            applyFilterAndRender();
+        }
     } catch (e) {
         await cnmAlert({
             title: _t("attach_remote_failed_title"),
@@ -1730,6 +1865,31 @@ async function _fetchStashes(folder) {
     }
 }
 
+async function refreshOneNode(folder) {
+    try {
+        const res = await _authedFetch("/custom_node_manager/refresh_node", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ folder }),
+            cache: "no-store",
+        });
+        const data = await res.json();
+        if (!data.success || !data.nodes || !data.nodes.length) {
+            return false;
+        }
+
+        const fresh = data.nodes[0];
+        const idx = _allNodes.findIndex((n) => n.folder === folder);
+        if (idx !== -1) {
+            _allNodes[idx] = fresh;
+        }
+        return true;
+    } catch (e) {
+        console.warn("🦊 refreshOneNode failed:", e);
+        return false;
+    }
+}
+
 async function openStashPicker(node) {
     const stashes = await _fetchStashes(node.folder);
     if (stashes === null) {
@@ -1754,12 +1914,158 @@ async function openStashPicker(node) {
     });
 
     if (result && result.changed) {
-        const live = _allNodes.find((n) => n.folder === node.folder);
-        if (live) {
-            live.stash_count = result.stashCount;
+        const ok = await refreshOneNode(node.folder);
+        if (!ok) {
+            const live = _allNodes.find((n) => n.folder === node.folder);
+            if (live) {
+                live.stash_count = result.stashCount;
+            }
         }
         applyFilterAndRender();
     }
+}
+
+function cnmUpdatePreview({ folder, preview }) {
+    return new Promise((resolve) => {
+        const { overlay, body, footer } = _buildDialogShell({
+            title: _tf("preview_title", { folder }),
+            onClose: () => close(false),
+        });
+
+        if (preview.dirty) {
+            const warn = document.createElement("div");
+            warn.className = "cnm-preview-warning";
+            warn.textContent = _t("preview_dirty_warning");
+            body.appendChild(warn);
+        }
+
+        const commitsHeader = document.createElement("div");
+        commitsHeader.className = "cnm-preview-section-title";
+        commitsHeader.textContent = _tf("preview_commits_header", {
+            n: preview.total_commits,
+        });
+        body.appendChild(commitsHeader);
+
+        const commitsWrap = document.createElement("div");
+        commitsWrap.className = "cnm-preview-commits";
+        for (const c of preview.commits) {
+            const row = document.createElement("div");
+            row.className = "cnm-preview-commit";
+
+            const sha = document.createElement("span");
+            sha.className = "cnm-preview-sha";
+            sha.textContent = c.sha;
+            row.appendChild(sha);
+
+            const sep = document.createElement("span");
+            sep.className = "cnm-preview-sep";
+            sep.textContent = " · ";
+            row.appendChild(sep);
+
+            const subj = document.createElement("span");
+            subj.className = "cnm-preview-subject";
+            subj.textContent = c.subject;
+            subj.title = c.subject;
+            row.appendChild(subj);
+
+            commitsWrap.appendChild(row);
+        }
+
+        if (preview.more_commits > 0) {
+            const more = document.createElement("div");
+            more.className = "cnm-preview-more";
+            more.textContent = _tf("preview_more_commits", { n: preview.more_commits });
+            commitsWrap.appendChild(more);
+        }
+        body.appendChild(commitsWrap);
+
+        if (preview.files_changed > 0) {
+            const stats = document.createElement("div");
+            stats.className = "cnm-preview-stats";
+            stats.textContent = _tf("preview_stats", {
+                files: preview.files_changed,
+                ins: preview.insertions,
+                del: preview.deletions,
+            });
+            body.appendChild(stats);
+
+            if (preview.files && preview.files.length) {
+                const filesWrap = document.createElement("div");
+                filesWrap.className = "cnm-preview-files";
+                for (const f of preview.files) {
+                    const row = document.createElement("div");
+                    row.className = "cnm-preview-file";
+
+                    const path = document.createElement("span");
+                    path.className = "cnm-preview-path";
+                    path.textContent = f.path;
+                    path.title = f.path;
+                    row.appendChild(path);
+
+                    const nums = document.createElement("span");
+                    nums.className = "cnm-preview-nums";
+
+                    const ins = document.createElement("span");
+                    ins.className = "cnm-stash-ins";
+                    ins.textContent = `+${f.insertions}`;
+                    nums.appendChild(ins);
+
+                    nums.appendChild(document.createTextNode(" "));
+
+                    const del = document.createElement("span");
+                    del.className = "cnm-stash-del";
+                    del.textContent = `−${f.deletions}`;
+                    nums.appendChild(del);
+
+                    row.appendChild(nums);
+                    filesWrap.appendChild(row);
+                }
+                body.appendChild(filesWrap);
+
+                if (preview.files_changed > preview.files.length) {
+                    const more = document.createElement("div");
+                    more.className = "cnm-preview-more";
+                    more.textContent = _tf("preview_more_files", {
+                        n: preview.files_changed - preview.files.length,
+                    });
+                    body.appendChild(more);
+                }
+            }
+        }
+
+        const cancelBtn = document.createElement("button");
+        cancelBtn.className = "cnm-btn";
+        cancelBtn.textContent = "Cancel";
+
+        const okBtn = document.createElement("button");
+        okBtn.className = "cnm-btn cnm-btn-primary";
+        okBtn.textContent = _t("preview_update_btn");
+
+        footer.appendChild(cancelBtn);
+        footer.appendChild(okBtn);
+
+        const close = (result) => {
+            document.removeEventListener("keydown", onKey, true);
+            overlay.remove();
+            resolve(result);
+        };
+
+        const onKey = (e) => {
+            if (e.key === "Escape") {
+                e.preventDefault(); e.stopPropagation();
+                close(false);
+            } else if (e.key === "Enter") {
+                e.preventDefault(); e.stopPropagation();
+                close(true);
+            }
+        };
+
+        cancelBtn.onclick = () => close(false);
+        okBtn.onclick = () => close(true);
+        document.addEventListener("keydown", onKey, true);
+
+        requestAnimationFrame(() => okBtn.focus());
+    });
 }
 
 function cnmStashPicker({ folder, stashes }) {
@@ -3097,6 +3403,99 @@ function injectStyles() {
             font-weight: 500;
         }
 
+        /* ---------- Update preview ---------- */
+        .cnm-preview-warning {
+            font-size: 12px;
+            color: #f59e0b;
+            padding: 8px 10px;
+            background: rgba(245,158,11,0.08);
+            border-left: 3px solid #f59e0b;
+            border-radius: 4px;
+        }
+        .cnm-preview-section-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--fg-color);
+            margin-top: 4px;
+        }
+        .cnm-preview-commits {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            max-height: 220px;
+            overflow-y: auto;
+            padding: 8px 10px;
+            background: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+        }
+        .cnm-preview-commit {
+            font-size: 12px;
+            display: flex;
+            align-items: baseline;
+            gap: 0;
+            line-height: 1.4;
+        }
+        .cnm-preview-sha {
+            font-family: monospace;
+            color: #3b82f6;
+            font-weight: 600;
+            flex: 0 0 auto;
+        }
+        .cnm-preview-sep {
+            color: var(--descrip-text);
+            opacity: 0.6;
+        }
+        .cnm-preview-subject {
+            color: var(--fg-color);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
+        .cnm-preview-more {
+            font-size: 11px;
+            color: var(--descrip-text);
+            font-style: italic;
+            margin-top: 4px;
+        }
+        .cnm-preview-stats {
+            font-size: 12px;
+            color: var(--descrip-text);
+            font-family: monospace;
+        }
+        .cnm-preview-files {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            padding: 6px 10px;
+            background: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            max-height: 140px;
+            overflow-y: auto;
+        }
+        .cnm-preview-file {
+            font-size: 12px;
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 8px;
+            line-height: 1.4;
+        }
+        .cnm-preview-path {
+            font-family: monospace;
+            color: var(--fg-color);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
+        .cnm-preview-nums {
+            font-family: monospace;
+            flex: 0 0 auto;
+        }
+
         .cnm-updates-chip {
             padding: 6px 12px;
             font-size: 12px;
@@ -3283,27 +3682,28 @@ function injectStyles() {
 
         .cnm-toast-container {
             position: fixed;
-            top: 60px;
-            right: 20px;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
             display: flex;
             flex-direction: column;
+            align-items: center;
             gap: 8px;
             z-index: 14000;
             pointer-events: none;
         }
         .cnm-toast {
             background: var(--comfy-menu-bg);
-            border: 1px solid var(--border-color);
             border-radius: 6px;
-            padding: 10px 16px;
-            font-size: 13px;
+            padding: 12px 20px;
+            font-size: 14px;
             color: var(--fg-color);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+            box-shadow: 0 6px 24px rgba(0,0,0,0.5);
             display: flex;
             align-items: center;
             gap: 10px;
-            min-width: 220px;
-            max-width: 360px;
+            min-width: 260px;
+            max-width: 420px;
             pointer-events: auto;
             animation: cnmToastIn 0.2s ease-out;
             white-space: pre-line;
@@ -3312,12 +3712,12 @@ function injectStyles() {
             animation: cnmToastOut 0.25s ease-in forwards;
         }
         @keyframes cnmToastIn {
-            from { transform: translateX(20px); opacity: 0; }
-            to   { transform: translateX(0);    opacity: 1; }
+            from { transform: scale(0.92); opacity: 0; }
+            to   { transform: scale(1);    opacity: 1; }
         }
         @keyframes cnmToastOut {
-            from { transform: translateX(0);    opacity: 1; }
-            to   { transform: translateX(20px); opacity: 0; }
+            from { transform: scale(1);    opacity: 1; }
+            to   { transform: scale(0.92); opacity: 0; }
         }
         .cnm-toast-icon {
             flex: 0 0 auto;
@@ -3329,13 +3729,16 @@ function injectStyles() {
             word-break: break-word;
         }
         .cnm-toast-success {
-            border-left: 3px solid #10b981;
+            border: 1px solid #10b981;
+            box-shadow: 0 6px 24px rgba(16,185,129,0.25), 0 6px 24px rgba(0,0,0,0.5);
         }
         .cnm-toast-error {
-            border-left: 3px solid #dc2626;
+            border: 1px solid #dc2626;
+            box-shadow: 0 6px 24px rgba(220,38,38,0.25), 0 6px 24px rgba(0,0,0,0.5);
         }
         .cnm-toast-info {
-            border-left: 3px solid #3b82f6;
+            border: 1px solid #3b82f6;
+            box-shadow: 0 6px 24px rgba(59,130,246,0.25), 0 6px 24px rgba(0,0,0,0.5);
         }
 
         .cnm-detected-url {
