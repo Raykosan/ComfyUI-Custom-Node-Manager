@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-10-03
+
+### Fixed
+- **CRLF / EOL phantom changes** on Windows no longer block updates. When `git status` reports modified files but `git diff --ignore-cr-at-eol` shows no real differences, the extension now:
+  - refreshes the index stat cache (`git update-index --really-refresh`)
+  - forces a clean checkout of tracked files
+  - applies `skip-worktree` to stubborn phantom-modified files
+- When `git checkout` or `git pull` still fails with "Your local changes would be overwritten", the extension clears `skip-worktree` bits and forces the operation (`checkout -f` / `reset --hard origin/<branch>`). Real changes are already in auto-stash at this point, so nothing is lost.
+
+### Changed
+- `git diff` checks now use `--ignore-cr-at-eol` to correctly detect whether changes are real or just line-ending artifacts
+
+### Notes
+- This fixes a recurring issue reported with repos that use `.gitattributes` with `eol=crlf` on Windows, combined with the user's `core.autocrlf` setting.
+
 ## [0.4.2] - 2026-09-27
 
 ### Added
