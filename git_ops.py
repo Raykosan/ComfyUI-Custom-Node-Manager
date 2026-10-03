@@ -1,3 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2025-2026 Raykosan (RaykoStudio)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import os
 import re
 import sys
@@ -155,6 +170,27 @@ def _clear_skip_worktree(node_dir: str) -> None:
         run_git(node_dir, "update-index", "--no-skip-worktree", "--", *skipped)
 
 
+def _apply_skip_worktree_if_phantom(node_dir: str) -> None:
+    rc, out, _ = run_git(node_dir, "status", "--porcelain")
+    if rc != 0 or not out.strip():
+        return
+
+    rc_diff, _, _ = run_git(node_dir, "diff", "--ignore-cr-at-eol", "--quiet")
+    if rc_diff == 0:
+        run_git(node_dir, "update-index", "--really-refresh", "-q")
+        rc, out2, _ = run_git(node_dir, "status", "--porcelain")
+        if rc == 0 and out2.strip():
+            run_git(node_dir, "checkout", "-f", "HEAD", "--", ".")
+            run_git(node_dir, "ls-files", "-z")
+            rc_files, out_files, _ = run_git(node_dir, "ls-files")
+            if rc_files == 0 and out_files:
+                files = [f for f in out_files.splitlines() if f.strip()]
+                if files:
+                    run_git(
+                        node_dir, "update-index", "--skip-worktree", "--", *files
+                    )
+
+
 def _ensure_clean_worktree(node_dir: str, progress: ProgressCb) -> None:
     rc, out, _ = run_git(node_dir, "status", "--porcelain")
     if rc != 0 or not out.strip():
@@ -245,16 +281,28 @@ def update_node(
 
             progress(f"git checkout {default_branch}")
             rc, out, err = run_git(node_dir, "checkout", default_branch)
+
             if rc != 0:
                 progress(f"git checkout -B {default_branch} origin/{default_branch}")
                 rc, out, err = run_git(
                     node_dir, "checkout", "-B", default_branch,
                     f"origin/{default_branch}",
                 )
-                if rc != 0:
-                    raise RuntimeError(
-                        f"git checkout {default_branch} failed: {err or out}"
+
+            if rc != 0:
+                err_str = f"{err or ''} {out or ''}".lower()
+                if "would be overwritten" in err_str or "local changes" in err_str:
+                    progress("Phantom conflict — clearing skip-worktree and forcing checkout")
+                    _clear_skip_worktree(node_dir)
+                    rc, out, err = run_git(
+                        node_dir, "checkout", "-f", "-B", default_branch,
+                        f"origin/{default_branch}",
                     )
+
+            if rc != 0:
+                raise RuntimeError(
+                    f"git checkout {default_branch} failed: {err or out}"
+                )
             current_branch = default_branch
 
         progress(f"git pull --ff-only (branch: {current_branch})")
@@ -280,6 +328,13 @@ def update_node(
     if stashed:
         progress(f"Local changes saved as {stashed}")
         progress(f"   restore with: git -C \"{node_dir}\" stash pop")
+
+    try:
+        _apply_skip_worktree_if_phantom(node_dir)
+    except Exception:
+        logger.exception("phantom cleanup failed")
+
+    return {"pip": pip_result, "stashed": stashed}
 
     return {"pip": pip_result, "stashed": stashed}
 

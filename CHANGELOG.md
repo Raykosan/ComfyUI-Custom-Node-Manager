@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4] - 2026-10-03
+
+### Fixed
+- **Detached HEAD → default branch** path now has the same phantom-conflict fallback as `checkout <tag>` and `git pull`. Previously, switching from a checked-out tag (detached HEAD) back to `main` / `master` could fail with "Your local changes would be overwritten" on repos with `.gitattributes` using `eol=crlf`.
+- After every successful update operation, `skip-worktree` bits are automatically re-applied to phantom-modified files, so `git status` stays clean without manual intervention.
+
 ## [0.4.3] - 2026-10-03
 
 ### Fixed
