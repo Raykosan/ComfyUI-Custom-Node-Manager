@@ -7,7 +7,7 @@ An alternative manager for `custom_nodes` that bypasses the restrictions of the 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![ComfyUI](https://img.shields.io/badge/ComfyUI-custom--node-orange)](https://github.com/comfyanonymous/ComfyUI)
 
-<img width="893" height="886" alt="Screenshot_3" src="https://github.com/user-attachments/assets/ac885cec-b117-4c1a-aa43-f5c1e72db688" />
+<img width="914" height="913" alt="Screenshot_1" src="https://github.com/user-attachments/assets/dddbf9f5-2e33-4b34-a9e3-2bfaa5e3edd3" />
 
 ---
 
